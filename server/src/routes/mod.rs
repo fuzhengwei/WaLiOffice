@@ -13,6 +13,7 @@ pub mod task;
 
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 
 pub fn build_router() -> Router {
     let cors = CorsLayer::new()
@@ -32,6 +33,10 @@ pub fn build_router() -> Router {
         .merge(dashboard::router())
         .merge(doc_export::router())
         .merge(health::router())
+        .nest_service(
+            "/outputs",
+            ServeDir::new(crate::config::config().render_output_dir.clone()),
+        )
         .fallback(embed::fallback_handler)
         .layer(cors)
 }

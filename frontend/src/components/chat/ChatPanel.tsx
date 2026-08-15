@@ -430,9 +430,9 @@ export function ChatPanel({
 
   return (
     <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-[#f6f4ef] via-[#f6f4ef]/90 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-0 h-20 bg-gradient-to-b from-[#f6f4ef] via-[#f6f4ef]/80 to-transparent" />
 
-      <div className="relative z-0 flex-1 overflow-y-auto px-5 pb-8 pt-8">
+      <div className="relative z-10 flex-1 overflow-y-auto px-5 pb-8 pt-10">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
           {messages.length === 0 && (
             <div className="flex min-h-[48vh] flex-col items-center justify-center text-center">
@@ -709,18 +709,19 @@ export function ChatPanel({
             )}
             <div className="rounded-[1.55rem] border border-black/[0.05] bg-[#fcfbf8]/96 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
               <div className="min-h-[90px]">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={handleInput}
-                  onKeyDown={handleKeyDown}
-                  onCompositionStart={handleCompositionStart}
-                  onCompositionEnd={handleCompositionEnd}
-                  placeholder={isStreaming ? '正在执行中，可点击停止...' : tool.promptPlaceholder}
-                  rows={2}
-                  disabled={isStreaming}
-                  className="min-h-[72px] max-h-[180px] w-full resize-none border-0 bg-transparent p-0 text-[15px] leading-[1.7] text-surface-900 outline-none placeholder:text-surface-400 disabled:text-surface-400"
-                />
+                {!isStreaming && (
+                  <textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={handleInput}
+                    onKeyDown={handleKeyDown}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
+                    placeholder={tool.promptPlaceholder}
+                    rows={2}
+                    className="min-h-[72px] max-h-[180px] w-full resize-none border-0 bg-transparent p-0 text-[15px] leading-[1.7] text-surface-900 outline-none placeholder:text-surface-400"
+                  />
+                )}
               </div>
 
               <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2.5">

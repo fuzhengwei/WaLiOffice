@@ -509,6 +509,12 @@ function VideoArtifact({ artifact }: { artifact: Artifact }) {
           {artifact.content.description}
         </div>
       )}
+      {artifact.content?.fallback_reason && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-800">
+          <div className="mb-1 text-xs font-semibold text-amber-600">本地兜底说明</div>
+          远程视频服务暂不可用，已改用本地 MP4 合成。原因：{artifact.content.fallback_reason}
+        </div>
+      )}
       <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">
         <div className="mb-1 text-xs font-semibold text-surface-400">视频提示词</div>
         {prompt}

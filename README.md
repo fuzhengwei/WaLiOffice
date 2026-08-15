@@ -1,6 +1,6 @@
 # WaLiOffice
 
-Web 端 AI Agent 智能办公平台 — 单一二进制部署，内置 PPT/文档/表格/流程图生成能力。
+Web 端 AI Agent 智能办公平台 — 单一二进制部署，内置 PPT/文档/表格/流程图/图像/视频生成能力。
 
 ## 技术栈
 
@@ -17,7 +17,7 @@ WaLiOffice/
 ├── server/              # Rust 服务端
 │   └── src/
 │       ├── agent/       # ReAct 循环 + 工具注册表 + 上下文管理
-│       │   └── tools/   # 6 个内置工具（PPT/DOC/Sheet/DrawIO/Image）
+│       │   └── tools/   # 内置工具（PPT/DOC/Sheet/DrawIO/Image/Video/Search）
 │       ├── llm/         # OpenAI 兼容 LLM client（非流式 + 流式）
 │       ├── db/          # SQLite + repository 模式
 │       ├── auth/        # JWT 认证中间件
@@ -52,6 +52,8 @@ cd server && cargo run
 cd frontend && npm install && npm run dev
 # 访问 http://localhost:5173
 ```
+
+> 视频生成优先调用 Agnes Video；当远程服务不可用（如 503）时，会使用本地 `ffmpeg` 合成可预览/下载的 MP4 草稿。若需要本地兜底能力，请先安装 `ffmpeg`。
 
 ### 3. 生产构建（单一二进制）
 
@@ -100,6 +102,7 @@ docker compose up -d
 | `sheet_generate` | 生成表格数据 |
 | `drawio_generate` | 生成 draw.io 图表 |
 | `image_prompt` | 生成图片提示词 |
+| `video_generate` | 生成视频，远程服务失败时本地合成 MP4 兜底 |
 
 ## 默认账号
 

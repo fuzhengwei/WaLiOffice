@@ -32,7 +32,7 @@ export const AGENT_TOOLS: AgentToolConfig[] = [
   {
     id: 'doc',
     name: '文档写作',
-    shortName: '文档',
+    shortName: 'docx',
     description: '报告、方案、PRD、纪要、知识库文章，支持 Word 与 Markdown 产物',
     artifactLabel: '文档预览',
     promptPlaceholder: '例如：写一份产品 PRD、技术设计文档、运营复盘报告，或输出 Markdown 接入说明',

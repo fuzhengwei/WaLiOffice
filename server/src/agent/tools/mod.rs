@@ -2,6 +2,7 @@ pub mod agnes_media;
 pub mod doc_generate;
 pub mod drawio_generate;
 pub mod image_prompt;
+pub mod local_video;
 pub mod md_generate;
 pub mod ppt_generate;
 pub mod ppt_plan;

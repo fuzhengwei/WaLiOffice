@@ -371,9 +371,10 @@ export default function Studio() {
       else setSelectedModel(pickChatModel(chatModels, selectedModel))
       if (saved.basic?.default_theme) setSelectedTheme(saved.basic.default_theme)
       setActiveView('chat')
-    } catch (err) {
+    } catch (err: any) {
       console.error('Save settings error:', err)
-      alert('设置保存失败')
+      alert(err.response?.data?.detail || err.message || '设置保存失败')
+      throw err
     }
   }
 

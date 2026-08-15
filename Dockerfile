@@ -22,7 +22,7 @@ RUN touch src/main.rs && cargo build --release
 # ── Stage 3: 运行时 ──
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 && \
+    ca-certificates libssl3 ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=server /srv/target/release/walioffice /usr/local/bin/walioffice

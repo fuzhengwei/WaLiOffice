@@ -11,6 +11,7 @@ use crate::models::{ChatAttachment, ChatMessage};
 use super::agnes_media::{
     get_json, http_client, post_json, resolve_api_key, AGNES_API_BASE, AGNES_VIDEO_MODEL,
 };
+use super::local_video;
 
 pub struct VideoGenerateTool;
 
@@ -134,6 +135,87 @@ fn normalize_mode(input: &str, image_count: usize) -> &'static str {
     }
 }
 
+fn default_video_plan(topic: &str, aspect_ratio: &str, duration: &str) -> VideoPlan {
+    VideoPlan {
+        title: topic.chars().take(24).collect::<String>(),
+        description: format!("围绕“{topic}”生成一支具有明确主体运动和镜头变化的短视频。"),
+        prompt: format!(
+            "Create a polished short video about: {topic}. Use a clear main subject, visible motion, cinematic camera movement, warm lighting, and an engaging commercial visual style."
+        ),
+        negative_prompt: "low quality, blurry, distorted, flicker, watermark, text artifacts".into(),
+        aspect_ratio: aspect_ratio.into(),
+        duration: duration.into(),
+    }
+}
+
+async fn local_video_artifact(
+    ctx: &ToolContext,
+    topic: &str,
+    plan: &VideoPlan,
+    width: u32,
+    height: u32,
+    frame_rate: u32,
+    num_frames: u32,
+    generation_mode: &str,
+    reference_image_count: usize,
+    fallback_reason: impl Into<String>,
+) -> ToolResult {
+    let fallback_reason = fallback_reason.into();
+    ctx.send(
+        "state_update",
+        json!({
+            "phase": "running",
+            "step": "本地视频兜底",
+            "detail": format!("远程视频服务暂不可用，正在本地合成可播放 MP4：{fallback_reason}"),
+            "at": chrono::Utc::now().to_rfc3339(),
+        }),
+    );
+
+    match local_video::generate_local_video(
+        topic,
+        &plan.aspect_ratio,
+        width,
+        height,
+        num_frames,
+        frame_rate,
+    )
+    .await
+    {
+        Ok(output) => ToolResult::ok(
+            format!("已为《{topic}》生成本地兜底视频；远程服务失败原因：{fallback_reason}"),
+            vec![ToolArtifact {
+                kind: "video".into(),
+                title: plan.title.clone(),
+                content: json!({
+                    "type": "generated_video",
+                    "title": plan.title,
+                    "description": format!("{}（本地兜底合成，可直接预览和下载）", plan.description),
+                    "prompt": plan.prompt,
+                    "negative_prompt": plan.negative_prompt,
+                    "video_url": output.public_url,
+                    "file_path": output.file_path,
+                    "status": "completed",
+                    "progress": 100,
+                    "seconds": format!("{:.1}", output.seconds),
+                    "size": output.size,
+                    "aspect_ratio": plan.aspect_ratio,
+                    "duration": plan.duration,
+                    "generation_mode": generation_mode,
+                    "reference_image_count": reference_image_count,
+                    "frame_rate": frame_rate,
+                    "frame_count": output.frame_count,
+                    "provider": "local_ffmpeg_fallback",
+                    "model": "local-motion-storyboard",
+                    "fallback_reason": fallback_reason,
+                }),
+            }],
+        ),
+        Err(local_err) => ToolResult::err(format!(
+            "远程视频服务失败：{fallback_reason}；本地兜底视频也生成失败：{local_err}"
+        )),
+    }
+}
+
 #[async_trait]
 impl OfficeTool for VideoGenerateTool {
     fn name(&self) -> &str {
@@ -243,7 +325,7 @@ impl OfficeTool for VideoGenerateTool {
         );
 
         let planner = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref());
-        let plan_response = match planner
+        let mut plan = match planner
             .chat(
                 &[
                     ChatMessage {
@@ -263,18 +345,24 @@ impl OfficeTool for VideoGenerateTool {
             )
             .await
         {
-            Ok(response) => response,
-            Err(err) => return ToolResult::err(format!("视频方案规划失败: {err}")),
-        };
-
-        let plan_content = plan_response
-            .choices
-            .first()
-            .and_then(|choice| choice.message.content.as_deref())
-            .unwrap_or("");
-        let mut plan = match parse_video_plan(plan_content) {
-            Ok(plan) => plan,
-            Err(err) => return ToolResult::err(err),
+            Ok(response) => {
+                let plan_content = response
+                    .choices
+                    .first()
+                    .and_then(|choice| choice.message.content.as_deref())
+                    .unwrap_or("");
+                match parse_video_plan(plan_content) {
+                    Ok(plan) => plan,
+                    Err(err) => {
+                        tracing::warn!("视频方案解析失败，使用默认方案兜底: {err}");
+                        default_video_plan(topic, requested_aspect_ratio, duration)
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!("视频方案规划失败，使用默认方案兜底: {err}");
+                default_video_plan(topic, requested_aspect_ratio, duration)
+            }
         };
 
         plan.aspect_ratio = requested_aspect_ratio.to_string();
@@ -285,11 +373,39 @@ impl OfficeTool for VideoGenerateTool {
 
         let api_key = match resolve_api_key(&ctx.user_id) {
             Ok(key) => key,
-            Err(err) => return ToolResult::err(err.to_string()),
+            Err(err) => {
+                return local_video_artifact(
+                    ctx,
+                    topic,
+                    &plan,
+                    width,
+                    height,
+                    frame_rate,
+                    num_frames,
+                    generation_mode,
+                    image_inputs.len(),
+                    format!("Agnes 凭证不可用：{err}"),
+                )
+                .await;
+            }
         };
         let client = match http_client(Duration::from_secs(90)) {
             Ok(client) => client,
-            Err(err) => return ToolResult::err(format!("初始化 Agnes 客户端失败: {err}")),
+            Err(err) => {
+                return local_video_artifact(
+                    ctx,
+                    topic,
+                    &plan,
+                    width,
+                    height,
+                    frame_rate,
+                    num_frames,
+                    generation_mode,
+                    image_inputs.len(),
+                    format!("初始化 Agnes 客户端失败：{err}"),
+                )
+                .await;
+            }
         };
 
         ctx.send(
@@ -330,7 +446,21 @@ impl OfficeTool for VideoGenerateTool {
                 .await
             {
                 Ok(response) => response,
-                Err(err) => return ToolResult::err(format!("Agnes 视频任务创建失败: {err}")),
+                Err(err) => {
+                    return local_video_artifact(
+                        ctx,
+                        topic,
+                        &plan,
+                        width,
+                        height,
+                        frame_rate,
+                        num_frames,
+                        generation_mode,
+                        image_inputs.len(),
+                        format!("Agnes 视频任务创建失败：{err}"),
+                    )
+                    .await;
+                }
             };
 
         let video_id = create_response.video_id.clone();
@@ -345,15 +475,39 @@ impl OfficeTool for VideoGenerateTool {
 
         loop {
             if Instant::now() >= deadline {
-                return ToolResult::err(format!(
+                return local_video_artifact(
+                    ctx,
+                    topic,
+                    &plan,
+                    width,
+                    height,
+                    frame_rate,
+                    num_frames,
+                    generation_mode,
+                    image_inputs.len(),
                     "视频生成超时：任务已创建（task_id: {task_id}，video_id: {video_id}），请稍后重试"
-                ));
+                )
+                .await;
             }
 
             let status_response =
                 match get_json::<QueryVideoResponse>(&client, &poll_url, &api_key).await {
                     Ok(response) => response,
-                    Err(err) => return ToolResult::err(format!("获取视频结果失败: {err}")),
+                    Err(err) => {
+                        return local_video_artifact(
+                            ctx,
+                            topic,
+                            &plan,
+                            width,
+                            height,
+                            frame_rate,
+                            num_frames,
+                            generation_mode,
+                            image_inputs.len(),
+                            format!("获取 Agnes 视频结果失败：{err}"),
+                        )
+                        .await;
+                    }
                 };
 
             latest_progress = status_response.progress.unwrap_or(latest_progress);
@@ -377,7 +531,21 @@ impl OfficeTool for VideoGenerateTool {
                         .ok_or_else(|| "视频任务已完成，但没有拿到最终视频链接".to_string());
                     let video_url = match video_url {
                         Ok(url) => url,
-                        Err(err) => return ToolResult::err(err),
+                        Err(err) => {
+                            return local_video_artifact(
+                                ctx,
+                                topic,
+                                &plan,
+                                width,
+                                height,
+                                frame_rate,
+                                num_frames,
+                                generation_mode,
+                                image_inputs.len(),
+                                err,
+                            )
+                            .await;
+                        }
                     };
                     return ToolResult::ok(
                         format!("已为《{topic}》生成视频结果"),
@@ -386,10 +554,10 @@ impl OfficeTool for VideoGenerateTool {
                             title: plan.title.clone(),
                             content: json!({
                                 "type": "generated_video",
-                                "title": plan.title,
-                                "description": plan.description,
-                                "prompt": plan.prompt,
-                                "negative_prompt": plan.negative_prompt,
+                                "title": plan.title.clone(),
+                                "description": plan.description.clone(),
+                                "prompt": plan.prompt.clone(),
+                                "negative_prompt": plan.negative_prompt.clone(),
                                 "video_url": video_url,
                                 "task_id": task_id,
                                 "video_id": status_response.video_id.or(Some(video_id)),
@@ -397,8 +565,8 @@ impl OfficeTool for VideoGenerateTool {
                                 "progress": status_response.progress.unwrap_or(100),
                                 "seconds": status_response.seconds,
                                 "size": status_response.size,
-                                "aspect_ratio": plan.aspect_ratio,
-                                "duration": plan.duration,
+                                "aspect_ratio": plan.aspect_ratio.clone(),
+                                "duration": plan.duration.clone(),
                                 "generation_mode": generation_mode,
                                 "reference_image_count": image_inputs.len(),
                                 "frame_rate": frame_rate,
@@ -414,7 +582,19 @@ impl OfficeTool for VideoGenerateTool {
                         .error
                         .map(|value| value.to_string())
                         .unwrap_or_else(|| "未知错误".to_string());
-                    return ToolResult::err(format!("视频生成失败：{detail}"));
+                    return local_video_artifact(
+                        ctx,
+                        topic,
+                        &plan,
+                        width,
+                        height,
+                        frame_rate,
+                        num_frames,
+                        generation_mode,
+                        image_inputs.len(),
+                        format!("Agnes 视频生成失败：{detail}"),
+                    )
+                    .await;
                 }
                 _ => sleep(Duration::from_secs(5)).await,
             }

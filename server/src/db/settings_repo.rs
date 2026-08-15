@@ -25,18 +25,33 @@ pub fn save_for_user(
     user_id: &str,
     settings: &AppSettings,
 ) -> AppResult<AppSettings> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let mut conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let now = chrono::Utc::now().to_rfc3339();
     let payload = serde_json::to_string(settings)?;
 
-    conn.execute(
-        "INSERT INTO user_settings (id, user_id, payload, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(user_id) DO UPDATE SET
-           payload = excluded.payload,
-           updated_at = excluded.updated_at",
-        params![uuid::Uuid::new_v4().to_string(), user_id, payload, now, now],
+    let tx = conn.transaction()?;
+    let updated = tx.execute(
+        "UPDATE user_settings
+         SET payload = ?1, updated_at = ?2
+         WHERE user_id = ?3",
+        params![&payload, &now, user_id],
     )?;
+
+    if updated == 0 {
+        tx.execute(
+            "INSERT INTO user_settings (id, user_id, payload, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                user_id,
+                &payload,
+                &now,
+                &now
+            ],
+        )?;
+    }
+
+    tx.commit()?;
 
     Ok(settings.clone())
 }
