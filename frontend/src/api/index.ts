@@ -67,7 +67,7 @@ export const sessionApi = {
 export const excelApi = {
   exportXlsx: (artifact: Artifact) => api.post('/excel/export', {
     title: artifact.title,
-    content: artifact.content,
+    tables: artifact.content?.tables || [],
   }, { responseType: 'blob' }),
 };
 

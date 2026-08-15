@@ -293,8 +293,25 @@ function DrawIoArtifact({ artifact, onUpdate }: { artifact: Artifact, onUpdate: 
 }
 
 function SheetArtifact({ artifact, onUpdate, onExport }: { artifact: Artifact, onUpdate: (updates: Partial<Artifact>) => void, onExport: () => void }) {
-  const rows: string[][] = artifact.content?.rows || [['字段', '说明'], ['暂无数据', '等待 Agent 生成']]
+  const tables: Array<{ title?: string; headers?: string[]; rows?: string[][]; summary?: string }> =
+    Array.isArray(artifact.content?.tables) && artifact.content.tables.length > 0
+      ? artifact.content.tables
+      : [{
+          title: artifact.title || '默认表',
+          headers: Array.isArray(artifact.content?.rows?.[0]) ? artifact.content.rows[0] : ['字段', '说明'],
+          rows: Array.isArray(artifact.content?.rows) ? artifact.content.rows.slice(1) : [['暂无数据', '等待 Agent 生成']],
+          summary: artifact.content?.summary,
+        }]
+  const [activeTableIndex, setActiveTableIndex] = useState(0)
+  const activeTable = tables[Math.min(activeTableIndex, tables.length - 1)] || tables[0]
+  const headers = activeTable?.headers?.length ? activeTable.headers : ['字段', '说明']
+  const bodyRows = activeTable?.rows?.length ? activeTable.rows : [['暂无数据', '等待 Agent 生成']]
   const [isExporting, setIsExporting] = useState(false)
+
+  useEffect(() => {
+    setActiveTableIndex((current) => Math.min(current, Math.max(0, tables.length - 1)))
+  }, [tables.length])
+
   const handleExport = async () => {
     try {
       setIsExporting(true)
@@ -303,10 +320,25 @@ function SheetArtifact({ artifact, onUpdate, onExport }: { artifact: Artifact, o
       setIsExporting(false)
     }
   }
-  const updateCell = (r: number, c: number, value: string) => {
-    const next = rows.map((row) => [...row])
-    next[r][c] = value
-    onUpdate({ content: { ...artifact.content, rows: next }, status: 'ready' })
+
+  const updateHeaderCell = (c: number, value: string) => {
+    const nextTables = tables.map((table, index) => {
+      if (index !== activeTableIndex) return table
+      const nextHeaders = [...(table.headers || headers)]
+      nextHeaders[c] = value
+      return { ...table, headers: nextHeaders }
+    })
+    onUpdate({ content: { ...artifact.content, tables: nextTables }, status: 'ready' })
+  }
+
+  const updateBodyCell = (r: number, c: number, value: string) => {
+    const nextTables = tables.map((table, index) => {
+      if (index !== activeTableIndex) return table
+      const nextRows = (table.rows || bodyRows).map((row) => [...row])
+      nextRows[r][c] = value
+      return { ...table, rows: nextRows }
+    })
+    onUpdate({ content: { ...artifact.content, tables: nextTables }, status: 'ready' })
   }
 
   return (
@@ -324,17 +356,51 @@ function SheetArtifact({ artifact, onUpdate, onExport }: { artifact: Artifact, o
           </button>
         </div>
       </div>
+      {tables.length > 1 && (
+        <div className="flex flex-wrap gap-2 border-b border-surface-100 bg-white px-4 py-3">
+          {tables.map((table, index) => (
+            <button
+              key={`${table.title || 'sheet'}-${index}`}
+              type="button"
+              onClick={() => setActiveTableIndex(index)}
+              className={`rounded-full px-3 py-1.5 text-xs transition-colors ${
+                index === activeTableIndex ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              }`}
+            >
+              {table.title || `表 ${index + 1}`}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="overflow-auto p-4">
+        {activeTable?.summary && (
+          <div className="mb-3 rounded-2xl bg-surface-50 px-3 py-2 text-xs leading-6 text-surface-500">
+            {activeTable.summary}
+          </div>
+        )}
         <table className="w-full min-w-[680px] border-collapse text-sm">
+          <thead>
+            <tr>
+              {headers.map((header, c) => (
+                <th key={`h-${c}`} className="border border-surface-200 bg-surface-100 p-0 font-semibold text-surface-700">
+                  <input
+                    className="h-full w-full bg-transparent px-3 py-2 outline-none focus:bg-primary-50"
+                    value={header}
+                    onChange={(e) => updateHeaderCell(c, e.target.value)}
+                  />
+                </th>
+              ))}
+            </tr>
+          </thead>
           <tbody>
-            {rows.map((row, r) => (
+            {bodyRows.map((row, r) => (
               <tr key={r}>
                 {row.map((cell, c) => (
-                  <td key={`${r}-${c}`} className={`border border-surface-200 p-0 ${r === 0 ? 'bg-surface-100 font-semibold text-surface-700' : 'text-surface-600'}`}>
+                  <td key={`${r}-${c}`} className="border border-surface-200 p-0 text-surface-600">
                     <input
                       className="h-full w-full bg-transparent px-3 py-2 outline-none focus:bg-primary-50"
                       value={cell}
-                      onChange={(e) => updateCell(r, c, e.target.value)}
+                      onChange={(e) => updateBodyCell(r, c, e.target.value)}
                     />
                   </td>
                 ))}
