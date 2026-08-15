@@ -508,7 +508,7 @@ export function ChatPanel({
               </div>
               <h1 className="text-3xl font-semibold tracking-tight text-surface-950">今天要做什么？</h1>
               <p className="mt-3 max-w-xl text-sm leading-6 text-surface-500">
-                WaLiOffice 在线智能办公 AI：先分析需求，再决策工具，最后绘制或生成产物。你可以先描述目标，也可以直接选工具开工。
+                WaLiOffice 在线智能办 公 AI：先分析需求，再决策工具，最后绘制或生成产物。你可以先描述目标，也可以直接选工具开工。
               </p>
               <div className="mt-7 grid w-full max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
                 {starterCards.map((card) => {
