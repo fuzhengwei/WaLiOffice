@@ -1,7 +1,7 @@
+use super::DbPool;
+use crate::error::AppResult;
 use crate::models::User;
 use rusqlite::params;
-use crate::error::AppResult;
-use super::DbPool;
 
 pub fn find_by_username(pool: &DbPool, username: &str) -> AppResult<Option<(User, String)>> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
@@ -50,7 +50,12 @@ pub fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<User>> {
     }
 }
 
-pub fn create(pool: &DbPool, username: &str, email: Option<&str>, password_hash: &str) -> AppResult<User> {
+pub fn create(
+    pool: &DbPool,
+    username: &str,
+    email: Option<&str>,
+    password_hash: &str,
+) -> AppResult<User> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();

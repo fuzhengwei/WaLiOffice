@@ -15,7 +15,9 @@ pub struct DocSection {
     pub table: Option<DocTable>,
 }
 
-fn default_level() -> u32 { 1 }
+fn default_level() -> u32 {
+    1
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocTable {
@@ -34,9 +36,8 @@ pub fn render_docx(data: &DocData, output_path: &std::path::Path) -> Result<()> 
     let mut doc = Docx::new();
 
     // 标题
-    doc = doc.add_paragraph(
-        Paragraph::new().add_run(Run::new().add_text(&data.title).bold().size(56))
-    );
+    doc = doc
+        .add_paragraph(Paragraph::new().add_run(Run::new().add_text(&data.title).bold().size(56)));
 
     for section in &data.sections {
         let heading_size = match section.heading_level {
@@ -45,21 +46,24 @@ pub fn render_docx(data: &DocData, output_path: &std::path::Path) -> Result<()> 
             _ => 26,
         };
         doc = doc.add_paragraph(
-            Paragraph::new().add_run(Run::new().add_text(&section.heading).bold().size(heading_size))
+            Paragraph::new().add_run(
+                Run::new()
+                    .add_text(&section.heading)
+                    .bold()
+                    .size(heading_size),
+            ),
         );
 
         for para in &section.paragraphs {
             let cleaned = strip_markdown(para);
-            doc = doc.add_paragraph(
-                Paragraph::new().add_run(Run::new().add_text(&cleaned).size(22))
-            );
+            doc =
+                doc.add_paragraph(Paragraph::new().add_run(Run::new().add_text(&cleaned).size(22)));
         }
 
         for bullet in &section.bullets {
             let cleaned = strip_markdown(bullet);
             doc = doc.add_paragraph(
-                Paragraph::new()
-                    .add_run(Run::new().add_text(format!("• {cleaned}")).size(22))
+                Paragraph::new().add_run(Run::new().add_text(format!("• {cleaned}")).size(22)),
             );
         }
 
@@ -68,11 +72,9 @@ pub fn render_docx(data: &DocData, output_path: &std::path::Path) -> Result<()> 
                 // 构建表头行
                 let mut header_cells: Vec<TableCell> = Vec::new();
                 for header in &table.headers {
-                    header_cells.push(
-                        TableCell::new().add_paragraph(
-                            Paragraph::new().add_run(Run::new().add_text(header).bold().size(20))
-                        )
-                    );
+                    header_cells.push(TableCell::new().add_paragraph(
+                        Paragraph::new().add_run(Run::new().add_text(header).bold().size(20)),
+                    ));
                 }
                 let mut rows: Vec<TableRow> = vec![TableRow::new(header_cells)];
 
@@ -80,11 +82,9 @@ pub fn render_docx(data: &DocData, output_path: &std::path::Path) -> Result<()> 
                 for row in &table.rows {
                     let mut cells: Vec<TableCell> = Vec::new();
                     for cell in row {
-                        cells.push(
-                            TableCell::new().add_paragraph(
-                                Paragraph::new().add_run(Run::new().add_text(cell).size(20))
-                            )
-                        );
+                        cells.push(TableCell::new().add_paragraph(
+                            Paragraph::new().add_run(Run::new().add_text(cell).size(20)),
+                        ));
                     }
                     rows.push(TableRow::new(cells));
                 }

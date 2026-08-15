@@ -1,13 +1,13 @@
-mod config;
-mod error;
-mod state;
-mod models;
-mod db;
-mod auth;
-mod llm;
 mod agent;
+mod auth;
+mod config;
+mod db;
+mod error;
+mod llm;
+mod models;
 mod render;
 mod routes;
+mod state;
 
 use std::net::SocketAddr;
 use tracing::info;

@@ -3,11 +3,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
+use crate::auth::middleware::AuthUser;
+use crate::db::user_repo;
 use crate::error::AppError;
 use crate::models::{LoginRequest, RegisterRequest, TokenResponse};
-use crate::auth::middleware::AuthUser;
 use crate::state;
-use crate::db::user_repo;
 
 pub fn router() -> Router {
     Router::new()

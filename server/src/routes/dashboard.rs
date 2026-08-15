@@ -2,10 +2,10 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::json;
 
-use crate::error::AppError;
 use crate::auth::middleware::AuthUser;
-use crate::state;
 use crate::db::{notification_repo, project_repo, session_repo, task_repo};
+use crate::error::AppError;
+use crate::state;
 
 pub fn router() -> Router {
     Router::new().route("/api/dashboard/stats", get(dashboard_stats))
@@ -31,16 +31,20 @@ async fn dashboard_stats(user: AuthUser) -> Result<Json<serde_json::Value>, AppE
         *ppt_count = json!(ppt_count.as_i64().unwrap_or(0) + ppt_projects.len() as i64);
     }
 
-    let recent_projects: Vec<_> = projects.iter().take(5).map(|project| {
-        json!({
-            "id": project.id,
-            "title": project.title,
-            "description": project.description,
-            "tool_kind": project.tool_kind,
-            "created_at": project.created_at,
-            "updated_at": project.updated_at,
+    let recent_projects: Vec<_> = projects
+        .iter()
+        .take(5)
+        .map(|project| {
+            json!({
+                "id": project.id,
+                "title": project.title,
+                "description": project.description,
+                "tool_kind": project.tool_kind,
+                "created_at": project.created_at,
+                "updated_at": project.updated_at,
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(json!({
         "tasks": task_stats,

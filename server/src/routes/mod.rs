@@ -1,15 +1,15 @@
 pub mod auth;
 pub mod chat;
-pub mod session;
-pub mod project;
-pub mod task;
-pub mod notification;
-pub mod settings;
-pub mod file;
 pub mod dashboard;
 pub mod doc_export;
-pub mod health;
 pub mod embed;
+pub mod file;
+pub mod health;
+pub mod notification;
+pub mod project;
+pub mod session;
+pub mod settings;
+pub mod task;
 
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};

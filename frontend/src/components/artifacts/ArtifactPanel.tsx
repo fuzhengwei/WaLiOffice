@@ -1,5 +1,9 @@
 import { Code2, Download, Eye, GripVertical, Image, Layers3, Maximize2, Minimize2, PenTool, Pencil, Save, Sparkles } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { DrawIoEmbed, type DrawIoEmbedRef } from '@/lib/react-drawio'
 import { SlideList } from '@/components/slides/SlideList'
 import { SlidePreview } from '@/components/preview/SlidePreview'
@@ -27,6 +31,7 @@ interface ArtifactPanelProps {
   onUpdateArtifact: (id: string, updates: Partial<Artifact>) => void
   onExportExcel: (artifact: Artifact) => void
   onExportDocx: (artifact: Artifact) => void
+  onExportMarkdown: (artifact: Artifact) => void
   onExportDrawio: (artifact: Artifact) => void
 }
 
@@ -49,17 +54,112 @@ function EmptyArtifact({ activeTool }: { activeTool: ToolKind }) {
   )
 }
 
+function normalizeMarkdown(markdown: string) {
+  return markdown
+    .trim()
+    .replace(/^```(?:md|markdown)\s*/i, '')
+    .replace(/\s*```$/, '')
+}
+
 function MarkdownPreview({ markdown }: { markdown: string }) {
+  const content = normalizeMarkdown(markdown)
+
   return (
     <div className="mx-auto max-w-3xl rounded-2xl border border-surface-200 bg-white p-8 shadow-sm">
-      {markdown.split('\n').map((line, idx) => {
-        if (line.startsWith('# ')) return <h1 key={idx} className="mb-4 text-2xl font-bold text-surface-900">{line.slice(2)}</h1>
-        if (line.startsWith('## ')) return <h2 key={idx} className="mb-2 mt-5 text-lg font-semibold text-surface-800">{line.slice(3)}</h2>
-        if (line.startsWith('- ')) return <li key={idx} className="ml-5 list-disc text-sm leading-7 text-surface-600">{line.slice(2)}</li>
-        if (/^\d+\. /.test(line)) return <div key={idx} className="text-sm leading-7 text-surface-600">{line}</div>
-        if (!line) return <div key={idx} className="h-2" />
-        return <p key={idx} className="text-sm leading-7 text-surface-600">{line}</p>
-      })}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ children }) => <h1 className="mb-4 text-3xl font-bold tracking-tight text-surface-950">{children}</h1>,
+          h2: ({ children }) => <h2 className="mb-3 mt-8 border-b border-surface-200 pb-2 text-2xl font-semibold text-surface-900">{children}</h2>,
+          h3: ({ children }) => <h3 className="mb-2 mt-6 text-lg font-semibold text-surface-900">{children}</h3>,
+          h4: ({ children }) => <h4 className="mb-2 mt-4 text-base font-semibold text-surface-800">{children}</h4>,
+          p: ({ children }) => <p className="my-3 text-sm leading-7 text-surface-700">{children}</p>,
+          strong: ({ children }) => <strong className="font-semibold text-surface-950">{children}</strong>,
+          em: ({ children }) => <em className="italic text-surface-800">{children}</em>,
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-primary-600 underline decoration-primary-200 underline-offset-4 transition-colors hover:text-primary-700"
+            >
+              {children}
+            </a>
+          ),
+          ul: ({ children }) => <ul className="my-3 list-disc space-y-2 pl-6 text-sm leading-7 text-surface-700">{children}</ul>,
+          ol: ({ children }) => <ol className="my-3 list-decimal space-y-2 pl-6 text-sm leading-7 text-surface-700">{children}</ol>,
+          li: ({ children, ...props }) => {
+            const hasTaskCheckbox = Array.isArray(props.children) && props.children.some((child: any) => child?.type === 'input')
+            return <li className={`${hasTaskCheckbox ? 'flex items-start gap-2 pl-0' : 'pl-1'} marker:text-surface-400`}>{children}</li>
+          },
+          input: ({ checked, disabled, type }) => {
+            if (type !== 'checkbox') return null
+            return (
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={disabled ?? true}
+                readOnly
+                className="mt-1 h-4 w-4 rounded border-surface-300 text-primary-600 focus:ring-primary-500"
+              />
+            )
+          },
+          blockquote: ({ children }) => (
+            <blockquote className="my-5 rounded-r-2xl border-l-4 border-primary-200 bg-primary-50/70 px-4 py-3 text-sm leading-7 text-surface-700">
+              {children}
+            </blockquote>
+          ),
+          hr: () => <hr className="my-8 border-surface-200" />,
+          table: ({ children }) => (
+            <div className="my-5 overflow-x-auto rounded-2xl border border-surface-200">
+              <table className="min-w-full border-collapse bg-white text-sm">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-surface-50 text-surface-800">{children}</thead>,
+          tbody: ({ children }) => <tbody>{children}</tbody>,
+          tr: ({ children }) => <tr className="border-b border-surface-200 last:border-b-0">{children}</tr>,
+          th: ({ children }) => <th className="px-4 py-3 text-left font-semibold">{children}</th>,
+          td: ({ children }) => <td className="px-4 py-3 align-top text-surface-700">{children}</td>,
+          pre: ({ children }) => <>{children}</>,
+          code: ({ className, children }) => {
+            const raw = String(children).replace(/\n$/, '')
+            const match = /language-([\w-]+)/.exec(className || '')
+            const isBlock = Boolean(match) || raw.includes('\n')
+            if (isBlock) {
+              return (
+                <div className="my-5 overflow-hidden rounded-2xl border border-surface-200 shadow-sm">
+                  <div className="flex items-center justify-between border-b border-surface-200 bg-surface-50 px-4 py-2 text-[11px] font-medium text-surface-500">
+                    <span>{match?.[1] || 'code'}</span>
+                    <span>代码块</span>
+                  </div>
+                  <SyntaxHighlighter
+                    language={match?.[1]}
+                    style={oneLight}
+                    customStyle={{
+                      margin: 0,
+                      padding: '16px',
+                      background: '#fafaf9',
+                      fontSize: '12px',
+                      lineHeight: '1.7',
+                    }}
+                    codeTagProps={{ style: { fontFamily: 'SFMono-Regular, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' } }}
+                    wrapLongLines
+                  >
+                    {raw}
+                  </SyntaxHighlighter>
+                </div>
+              )
+            }
+            return (
+              <code className="rounded-md bg-surface-100 px-1.5 py-0.5 text-[0.9em] text-surface-900">
+                {raw}
+              </code>
+            )
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   )
 }
@@ -101,6 +201,41 @@ function DocumentArtifact({ artifact, onExport }: { artifact: Artifact, onExport
       ) : (
         <MarkdownPreview markdown={content.markdown || '# 文档草稿\n\n暂无内容。'} />
       )}
+    </div>
+  )
+}
+
+function MarkdownArtifact({ artifact, onExport }: { artifact: Artifact, onExport: () => void }) {
+  const [isExporting, setIsExporting] = useState(false)
+  const markdown = artifact.content?.markdown || `# ${artifact.title || 'Markdown 文档'}\n\n暂无内容。`
+
+  const handleExport = async () => {
+    try {
+      setIsExporting(true)
+      await Promise.resolve(onExport())
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  return (
+    <div className="flex h-full w-full flex-col gap-3">
+      <div className="shrink-0 flex items-center justify-between rounded-2xl border border-surface-200 bg-white px-4 py-3 shadow-sm">
+        <div>
+          <div className="text-sm font-semibold text-surface-800">{artifact.title || 'Markdown 文档'}</div>
+          <div className="text-xs text-surface-400">Markdown 阅读视图 · 下载 MD</div>
+        </div>
+        <button
+          className="inline-flex items-center gap-1 rounded-full bg-surface-950 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={isExporting}
+          onClick={handleExport}
+        >
+          <Download className="h-3.5 w-3.5" />{isExporting ? '下载中…' : '下载 MD'}
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+        <MarkdownPreview markdown={markdown} />
+      </div>
     </div>
   )
 }
@@ -215,6 +350,7 @@ function SheetArtifact({ artifact, onUpdate, onExport }: { artifact: Artifact, o
 function ImageArtifact({ artifact }: { artifact: Artifact }) {
   const prompt = artifact.content?.prompt || '等待图像 Agent 生成提示词或图片。'
   const images: string[] = artifact.content?.images || []
+  const variants: Array<{ style?: string; prompt?: string }> = artifact.content?.data?.prompts || []
   return (
     <div className="w-full max-w-3xl space-y-4">
       {images.length > 0 ? (
@@ -227,6 +363,77 @@ function ImageArtifact({ artifact }: { artifact: Artifact }) {
       <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">
         <div className="mb-1 text-xs font-semibold text-surface-400">图像提示词</div>
         {prompt}
+      </div>
+      {variants.length > 0 && (
+        <div className="grid gap-3 md:grid-cols-3">
+          {variants.map((variant, index) => (
+            <div key={`${variant.style || 'style'}-${index}`} className="rounded-2xl border border-surface-200 bg-white p-4 text-xs leading-6 text-surface-600 shadow-sm">
+              <div className="mb-2 text-sm font-semibold text-surface-900">{variant.style || `风格 ${index + 1}`}</div>
+              <div className="line-clamp-6">{variant.prompt || '暂无提示词'}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SearchArtifact({ artifact }: { artifact: Artifact }) {
+  const provider = artifact.content?.provider_label || artifact.content?.provider || '未知来源'
+  const query = artifact.content?.query || artifact.title
+  const providersTried: string[] = artifact.content?.providers_tried || []
+  const results: Array<{ title: string; url: string; snippet?: string; source?: string }> = artifact.content?.results || []
+  const chain = providersTried.join(' -> ')
+
+  return (
+    <div className="flex h-full w-full flex-col gap-3">
+      <div className="rounded-2xl border border-surface-200 bg-white px-4 py-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-surface-900">{query}</div>
+            <div className="mt-1 text-xs text-surface-500">搜索来源：{provider}</div>
+          </div>
+          <div className="rounded-2xl bg-surface-50 px-3 py-2 text-right">
+            <div className="text-[11px] text-surface-400">结果数量</div>
+            <div className="text-lg font-semibold text-surface-900">{results.length}</div>
+          </div>
+        </div>
+        {providersTried.length > 0 && (
+          <div className="mt-3">
+            <div className="mb-2 text-[11px] font-medium text-surface-400">检索链路</div>
+            <div className="mb-2 text-xs text-surface-500">{chain}</div>
+            <div className="flex flex-wrap gap-2">
+            {providersTried.map((item) => (
+              <span key={item} className="rounded-full bg-surface-100 px-2.5 py-1 text-[11px] font-medium text-surface-600">{item}</span>
+            ))}
+          </div>
+          </div>
+        )}
+      </div>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-4">
+        {results.length > 0 ? results.map((item, index) => (
+          <a
+            key={`${item.url}-${index}`}
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            className="block rounded-2xl border border-surface-200 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-surface-300 hover:shadow-md"
+          >
+            <div className="mb-2 flex items-center gap-2 text-[11px] text-surface-500">
+              <span className="rounded-full bg-surface-100 px-2 py-1 font-medium">{item.source || provider}</span>
+              <span>结果 {index + 1}</span>
+            </div>
+            <div className="text-sm font-semibold leading-6 text-surface-900">{item.title}</div>
+            {item.snippet && (
+              <div className="mt-2 line-clamp-4 text-xs leading-6 text-surface-600">{item.snippet}</div>
+            )}
+            <div className="mt-3 truncate text-xs text-primary-600">{item.url}</div>
+          </a>
+        )) : (
+          <div className="rounded-2xl border border-dashed border-surface-200 bg-white/70 px-4 py-8 text-center text-sm text-surface-500">
+            当前没有可展示的搜索结果。
+          </div>
+        )}
       </div>
     </div>
   )
@@ -277,12 +484,14 @@ function MixedArtifact({ artifact }: { artifact: Artifact }) {
   )
 }
 
-function ArtifactBody({ artifact, activeTool, onUpdate, onExportExcel, onExportDocx }: { artifact: Artifact | null, activeTool: ToolKind, onUpdate: (id: string, updates: Partial<Artifact>) => void, onExportExcel: (artifact: Artifact) => void, onExportDocx: (artifact: Artifact) => void }) {
+function ArtifactBody({ artifact, activeTool, onUpdate, onExportExcel, onExportDocx, onExportMarkdown }: { artifact: Artifact | null, activeTool: ToolKind, onUpdate: (id: string, updates: Partial<Artifact>) => void, onExportExcel: (artifact: Artifact) => void, onExportDocx: (artifact: Artifact) => void, onExportMarkdown: (artifact: Artifact) => void }) {
   if (!artifact) return <EmptyArtifact activeTool={activeTool} />
   if (artifact.kind === 'document') return <DocumentArtifact artifact={artifact} onExport={() => onExportDocx(artifact)} />
+  if (artifact.kind === 'markdown') return <MarkdownArtifact artifact={artifact} onExport={() => onExportMarkdown(artifact)} />
   if (artifact.kind === 'drawio') return <DrawIoArtifact artifact={artifact} onUpdate={(updates) => onUpdate(artifact.id, updates)} />
   if (artifact.kind === 'sheet') return <SheetArtifact artifact={artifact} onUpdate={(updates) => onUpdate(artifact.id, updates)} onExport={() => onExportExcel(artifact)} />
   if (artifact.kind === 'image') return <ImageArtifact artifact={artifact} />
+  if (artifact.kind === 'search') return <SearchArtifact artifact={artifact} />
   if (artifact.kind === 'code') return <CodeArtifact artifact={artifact} />
   if (artifact.kind === 'mixed') return <MixedArtifact artifact={artifact} />
   return <EmptyArtifact activeTool={activeTool} />
@@ -308,6 +517,7 @@ export function ArtifactPanel({
   onUpdateArtifact,
   onExportExcel,
   onExportDocx,
+  onExportMarkdown,
   onExportDrawio,
 }: ArtifactPanelProps) {
   const [panelWidth, setPanelWidth] = useState(isWide ? 760 : 560)
@@ -335,12 +545,23 @@ export function ArtifactPanel({
   if (!isOpen) return null
 
   const titleMap: Record<string, string> = {
-    general: '动态成果展示', ppt: 'PPT 预览', doc: '文档预览', drawio: 'draw.io 画布', excel: '在线 Excel', image: '图像结果', code: '代码结果',
+    general: '动态成果展示', ppt: 'PPT 预览', doc: '文档预览', drawio: 'draw.io 画布', excel: '在线 Excel', image: '图像结果', code: '代码结果', search: '搜索结果',
+  }
+  const artifactKindLabel: Record<string, string> = {
+    document: 'Word',
+    markdown: 'MD',
+    drawio: 'draw.io',
+    sheet: 'Excel',
+    ppt: 'PPT',
+    image: '图片',
+    search: '搜索',
+    code: '代码',
+    mixed: '综合',
   }
 
   const effectiveTool = activeArtifact?.tool_kind || activeTool
   const headerTitle = activeArtifact?.title || titleMap[effectiveTool] || '成果展示'
-  const canExportActiveArtifact = activeArtifact?.kind === 'document' || activeArtifact?.kind === 'sheet' || activeArtifact?.kind === 'drawio'
+  const canExportActiveArtifact = activeArtifact?.kind === 'document' || activeArtifact?.kind === 'markdown' || activeArtifact?.kind === 'sheet' || activeArtifact?.kind === 'drawio'
 
   return (
     <aside
@@ -381,6 +602,12 @@ export function ArtifactPanel({
               导出 DOCX
             </button>
           )}
+          {canExportActiveArtifact && activeArtifact?.kind === 'markdown' && (
+            <button className="btn-secondary h-8 px-2.5 text-xs" onClick={() => onExportMarkdown(activeArtifact)}>
+              <Download className="h-3.5 w-3.5" />
+              下载 MD
+            </button>
+          )}
           {canExportActiveArtifact && activeArtifact?.kind === 'sheet' && (
             <button className="btn-secondary h-8 px-2.5 text-xs" onClick={() => onExportExcel(activeArtifact)}>
               <Download className="h-3.5 w-3.5" />
@@ -410,7 +637,7 @@ export function ArtifactPanel({
                 className={`shrink-0 rounded-full px-3 py-1 text-xs ${activeArtifact?.id === artifact.id ? 'bg-primary-600 text-white' : 'bg-surface-100 text-surface-500 hover:bg-surface-200'}`}
                 title={artifact.title}
               >
-                {artifact.kind} · {artifact.title.slice(0, 16)}
+                {(artifactKindLabel[artifact.kind] || artifact.kind)} · {artifact.title.slice(0, 16)}
               </button>
             ))}
           </div>
@@ -448,7 +675,7 @@ export function ArtifactPanel({
             {effectiveTool === 'ppt' ? (
               slides.length > 0 ? <SlidePreview slide={slides[currentSlideIndex]} layout="16x9" /> : <EmptyArtifact activeTool={effectiveTool} />
             ) : (
-              <ArtifactBody artifact={activeArtifact} activeTool={effectiveTool} onUpdate={onUpdateArtifact} onExportExcel={onExportExcel} onExportDocx={onExportDocx} />
+              <ArtifactBody artifact={activeArtifact} activeTool={effectiveTool} onUpdate={onUpdateArtifact} onExportExcel={onExportExcel} onExportDocx={onExportDocx} onExportMarkdown={onExportMarkdown} />
             )}
           </div>
         </div>

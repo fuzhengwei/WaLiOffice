@@ -12,7 +12,12 @@ use crate::models::ChatMessage;
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     Delta(String),
-    ToolCallDelta { index: usize, id: Option<String>, name: Option<String>, arguments: Option<String> },
+    ToolCallDelta {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments: Option<String>,
+    },
     Done,
 }
 
@@ -98,12 +103,20 @@ impl LlmStreamClient {
                                 }
                                 if let Some(tool_calls) = delta.tool_calls {
                                     for tc in tool_calls {
-                                        let _ = tx.send(StreamEvent::ToolCallDelta {
-                                            index: tc.index,
-                                            id: tc.id,
-                                            name: tc.function.as_ref().and_then(|f| f.name.clone()),
-                                            arguments: tc.function.as_ref().and_then(|f| f.arguments.clone()),
-                                        }).await;
+                                        let _ = tx
+                                            .send(StreamEvent::ToolCallDelta {
+                                                index: tc.index,
+                                                id: tc.id,
+                                                name: tc
+                                                    .function
+                                                    .as_ref()
+                                                    .and_then(|f| f.name.clone()),
+                                                arguments: tc
+                                                    .function
+                                                    .as_ref()
+                                                    .and_then(|f| f.arguments.clone()),
+                                            })
+                                            .await;
                                     }
                                 }
                                 if choice.finish_reason.is_some() {

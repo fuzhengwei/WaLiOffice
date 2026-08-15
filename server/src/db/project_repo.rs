@@ -1,10 +1,10 @@
+use super::DbPool;
+use crate::error::AppResult;
 use crate::models::PptProject;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use crate::error::AppResult;
-use super::DbPool;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectRow {
@@ -17,7 +17,12 @@ pub struct ProjectRow {
     pub updated_at: String,
 }
 
-pub fn create(pool: &DbPool, title: &str, tool_kind: &str, owner_id: &str) -> AppResult<ProjectRow> {
+pub fn create(
+    pool: &DbPool,
+    title: &str,
+    tool_kind: &str,
+    owner_id: &str,
+) -> AppResult<ProjectRow> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -27,39 +32,63 @@ pub fn create(pool: &DbPool, title: &str, tool_kind: &str, owner_id: &str) -> Ap
         params![id, title, tool_kind, owner_id, &now, &now],
     )?;
     Ok(ProjectRow {
-        id, title: title.to_string(), description: None,
-        tool_kind: tool_kind.to_string(), owner_id: owner_id.to_string(),
-        created_at: now.clone(), updated_at: now,
+        id,
+        title: title.to_string(),
+        description: None,
+        tool_kind: tool_kind.to_string(),
+        owner_id: owner_id.to_string(),
+        created_at: now.clone(),
+        updated_at: now,
     })
 }
 
-pub fn list_by_owner(pool: &DbPool, owner_id: &str, query: Option<&str>) -> AppResult<Vec<ProjectRow>> {
+pub fn list_by_owner(
+    pool: &DbPool,
+    owner_id: &str,
+    query: Option<&str>,
+) -> AppResult<Vec<ProjectRow>> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let q = query.map(|item| format!("%{}%", item.trim())).filter(|item| item != "%%");
+    let q = query
+        .map(|item| format!("%{}%", item.trim()))
+        .filter(|item| item != "%%");
     let mut result = Vec::new();
     if let Some(ref qv) = q {
         let mut stmt = conn.prepare(
             "SELECT id, title, description, tool_kind, owner_id, created_at, updated_at
              FROM projects
              WHERE owner_id = ?1 AND (title LIKE ?2 OR COALESCE(description, '') LIKE ?2)
-             ORDER BY updated_at DESC"
+             ORDER BY updated_at DESC",
         )?;
-        let rows = stmt.query_map(params![owner_id, qv], |row| Ok(ProjectRow {
-            id: row.get(0)?, title: row.get(1)?, description: row.get(2)?, tool_kind: row.get(3)?,
-            owner_id: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?,
-        }))?;
+        let rows = stmt.query_map(params![owner_id, qv], |row| {
+            Ok(ProjectRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                tool_kind: row.get(3)?,
+                owner_id: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
         for row in rows {
             result.push(row?);
         }
     } else {
         let mut stmt = conn.prepare(
             "SELECT id, title, description, tool_kind, owner_id, created_at, updated_at
-             FROM projects WHERE owner_id = ?1 ORDER BY updated_at DESC"
+             FROM projects WHERE owner_id = ?1 ORDER BY updated_at DESC",
         )?;
-        let rows = stmt.query_map(params![owner_id], |row| Ok(ProjectRow {
-            id: row.get(0)?, title: row.get(1)?, description: row.get(2)?, tool_kind: row.get(3)?,
-            owner_id: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?,
-        }))?;
+        let rows = stmt.query_map(params![owner_id], |row| {
+            Ok(ProjectRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                tool_kind: row.get(3)?,
+                owner_id: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
         for row in rows {
             result.push(row?);
         }
@@ -73,15 +102,17 @@ pub fn find_by_id(pool: &DbPool, id: &str, owner_id: &str) -> AppResult<Option<P
         "SELECT id, title, description, tool_kind, owner_id, created_at, updated_at
          FROM projects WHERE id = ?1 AND owner_id = ?2",
         params![id, owner_id],
-        |row| Ok(ProjectRow {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            description: row.get(2)?,
-            tool_kind: row.get(3)?,
-            owner_id: row.get(4)?,
-            created_at: row.get(5)?,
-            updated_at: row.get(6)?,
-        }),
+        |row| {
+            Ok(ProjectRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                tool_kind: row.get(3)?,
+                owner_id: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        },
     );
     match row {
         Ok(project) => Ok(Some(project)),
@@ -115,7 +146,14 @@ pub fn update(
         "UPDATE projects
          SET title = ?1, description = ?2, tool_kind = ?3, updated_at = ?4
          WHERE id = ?5 AND owner_id = ?6",
-        params![next_title, next_description, next_tool_kind, &now, id, owner_id],
+        params![
+            next_title,
+            next_description,
+            next_tool_kind,
+            &now,
+            id,
+            owner_id
+        ],
     )?;
 
     Ok(Some(ProjectRow {
@@ -153,19 +191,25 @@ pub fn save_ppt_project(project: &PptProject) -> AppResult<()> {
 
 pub fn load_ppt_project(project_id: &str) -> AppResult<Option<PptProject>> {
     let path = project_path(project_id);
-    if !path.exists() { return Ok(None); }
+    if !path.exists() {
+        return Ok(None);
+    }
     let json = fs::read_to_string(path)?;
     Ok(Some(serde_json::from_str(&json)?))
 }
 
 pub fn list_ppt_projects(owner_id: Option<&str>) -> AppResult<Vec<PptProject>> {
     let dir = &crate::config::config().projects_dir;
-    if !std::path::Path::new(dir).exists() { return Ok(vec![]); }
+    if !std::path::Path::new(dir).exists() {
+        return Ok(vec![]);
+    }
     let mut projects = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
         if let Ok(json) = fs::read_to_string(&path) {
             if let Ok(proj) = serde_json::from_str::<PptProject>(&json) {
                 if owner_id.map_or(true, |oid| proj.owner_id == oid) {

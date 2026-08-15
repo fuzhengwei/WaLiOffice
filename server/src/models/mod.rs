@@ -49,6 +49,20 @@ pub struct McpServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatAttachment {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub mime_type: String,
+    #[serde(default)]
+    pub size: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub llm_profiles: Vec<LlmProfileConfig>,
     pub active_profile_id: String,
@@ -99,6 +113,8 @@ pub struct ChatRequest {
     pub tool_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<ChatAttachment>>,
 }
 
 // ── Slide / PPT ──

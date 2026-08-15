@@ -4,10 +4,10 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::error::AppError;
 use crate::auth::middleware::AuthUser;
-use crate::state;
 use crate::db::notification_repo;
+use crate::error::AppError;
+use crate::state;
 
 pub fn router() -> Router {
     Router::new()
@@ -28,7 +28,10 @@ struct NotifQuery {
     page_size: Option<u32>,
 }
 
-async fn list_notifications(user: AuthUser, Query(q): Query<NotifQuery>) -> Result<Json<serde_json::Value>, AppError> {
+async fn list_notifications(
+    user: AuthUser,
+    Query(q): Query<NotifQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
     let unread = q.unread_only.unwrap_or(false);
     let limit = q.page_size.unwrap_or(50) as i64;
@@ -42,7 +45,10 @@ async fn unread_count(user: AuthUser) -> Result<Json<serde_json::Value>, AppErro
     Ok(Json(json!({ "count": count })))
 }
 
-async fn mark_as_read(user: AuthUser, Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+async fn mark_as_read(
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
     let ok = notification_repo::mark_as_read(&pool, &id, &user.0.id)?;
     Ok(Json(json!({ "ok": ok })))
@@ -54,7 +60,10 @@ async fn mark_all_as_read(user: AuthUser) -> Result<Json<serde_json::Value>, App
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn delete_notification(user: AuthUser, Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+async fn delete_notification(
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
     let deleted = notification_repo::delete(&pool, &id, &user.0.id)?;
     Ok(Json(json!({ "deleted": deleted })))

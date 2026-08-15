@@ -1,7 +1,7 @@
-import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Palette, Send, Sparkles, Square, Wand2, ChevronRight, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot } from 'lucide-react'
+import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Palette, Send, Sparkles, Square, Wand2, ChevronRight, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X } from 'lucide-react'
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment } from 'react'
-import type { AgentTraceEvent, Artifact, ChatMessage, LLMProfile, PPTProject, ToolKind } from '@/types'
+import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, LLMProfile, PPTProject, ToolKind } from '@/types'
 
 interface ChatPanelProps {
   messages: ChatMessage[]
@@ -26,6 +26,9 @@ interface ChatPanelProps {
   onInputChange: (v: string) => void
   onSend: () => void
   onStop: () => void
+  attachments: ChatAttachment[]
+  onPickAttachments: () => void
+  onRemoveAttachment: (id: string) => void
   onOpenArtifact: (artifactId: string) => void
   onExportArtifact: (artifact: Artifact) => void
   messagesEndRef: React.RefObject<HTMLDivElement>
@@ -128,6 +131,7 @@ interface ParsedLog {
   title: string
   detail: string
   status: LogStatus
+  highlight?: boolean
   isTool?: boolean
   toolName?: string
 }
@@ -159,7 +163,8 @@ function parseLogEntry(log: string, idx: number): ParsedLog {
     if (/工具|调用|执行|分发/i.test(step)) icon = Wrench
     if (/完成|done/i.test(step)) icon = Check
     if (/生成|绘制|创建/i.test(step)) icon = FileEdit
-    return { id: idx, icon, title: step, detail, status: 'running' }
+    if (/来源|检索来源/i.test(step)) icon = Sparkles
+    return { id: idx, icon, title: step, detail, status: 'running', highlight: /来源|检索来源/i.test(step) }
   }
 
   return { id: idx, icon: Circle, title: log, detail: '', status: 'running' }
@@ -191,6 +196,9 @@ export function ChatPanel({
   onInputChange,
   onSend,
   onStop,
+  attachments,
+  onPickAttachments,
+  onRemoveAttachment,
   onOpenArtifact,
   onExportArtifact,
   messagesEndRef,
@@ -250,10 +258,12 @@ export function ChatPanel({
   const showProcessPanel = isStreaming || traceEvents.length > 0 || processLogs.length > 0
   const artifactMeta: Record<string, { icon: typeof Bot; label: string; exportLabel?: string }> = {
     ppt: { icon: LayoutDashboard, label: 'PPT', exportLabel: '导出 PPTX' },
-    document: { icon: FileEdit, label: 'Markdown / 文档', exportLabel: '导出 DOCX' },
+    document: { icon: FileEdit, label: 'Word 文档', exportLabel: '导出 DOCX' },
+    markdown: { icon: FileEdit, label: 'Markdown 文档', exportLabel: '下载 MD' },
     drawio: { icon: PenTool, label: 'draw.io 图表', exportLabel: '下载 draw.io' },
     sheet: { icon: Sheet, label: 'Excel 表格', exportLabel: '导出 XLSX' },
     image: { icon: ImageIcon, label: '图片结果' },
+    search: { icon: Sparkles, label: '搜索结果卡片' },
     code: { icon: Terminal, label: '代码结果' },
     mixed: { icon: Bot, label: '综合结果' },
   }
@@ -264,9 +274,11 @@ export function ChatPanel({
       return `共 ${(artifact.content?.slides || []).length || artifact.content?.slide_count || 0} 页幻灯片，支持右侧预览和 PPTX 导出。`
     }
     if (artifact.kind === 'document') return '结构化文档已生成，支持右侧阅读和 DOCX 导出。'
+    if (artifact.kind === 'markdown') return 'Markdown 文档已生成，支持右侧渲染和 .md 下载。'
     if (artifact.kind === 'drawio') return '图表已生成，支持右侧预览/编辑，也可以下载 draw.io 源文件。'
     if (artifact.kind === 'sheet') return '表格数据已生成，支持右侧查看并导出为 Excel。'
     if (artifact.kind === 'image') return '图像结果已生成，可在右侧查看详情。'
+    if (artifact.kind === 'search') return `已生成搜索结果卡片，来源：${artifact.content?.provider_label || artifact.content?.provider || '未知来源'}。`
     if (artifact.kind === 'code') return '代码结果已生成，可在右侧查看步骤与内容。'
     return '综合产物已生成，可在右侧继续查看详细内容。'
   }
@@ -274,6 +286,7 @@ export function ChatPanel({
   const artifactExtension = (artifact: Artifact) => {
     if (artifact.kind === 'ppt') return '.pptx'
     if (artifact.kind === 'document') return '.docx'
+    if (artifact.kind === 'markdown') return '.md'
     if (artifact.kind === 'drawio') return '.drawio'
     if (artifact.kind === 'sheet') return '.xlsx'
     return '.file'
@@ -326,6 +339,21 @@ export function ChatPanel({
                     {streamStatus || '正在处理...'}
                   </span>
                 ) : '')}
+                {msg.attachments && msg.attachments.length > 0 && (
+                  <div className={`mt-3 flex flex-wrap gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {msg.attachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] ${
+                          msg.role === 'user' ? 'bg-white/12 text-white/90' : 'bg-surface-100 text-surface-600'
+                        }`}
+                      >
+                        {attachment.kind === 'image' ? <ImageIcon className="h-3.5 w-3.5" /> : <FileEdit className="h-3.5 w-3.5" />}
+                        <span className="max-w-[180px] truncate">{attachment.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -378,7 +406,7 @@ export function ChatPanel({
                             <Check className="h-3 w-3 text-surface-300" />
                           )}
                         </span>
-                        <span className="text-surface-500">{log.title}</span>
+                        <span className={log.highlight ? 'rounded-full bg-surface-100 px-1.5 py-0.5 text-surface-700' : 'text-surface-500'}>{log.title}</span>
                         {log.detail && <span className="text-surface-400">：{log.detail}</span>}
                       </div>
                     ))}
@@ -462,7 +490,7 @@ export function ChatPanel({
                         <Eye className="h-3.5 w-3.5" />
                         右侧预览
                       </button>
-                      {(selectedArtifact.kind === 'ppt' || selectedArtifact.kind === 'document' || selectedArtifact.kind === 'sheet' || selectedArtifact.kind === 'drawio') && (
+                      {(selectedArtifact.kind === 'ppt' || selectedArtifact.kind === 'document' || selectedArtifact.kind === 'markdown' || selectedArtifact.kind === 'sheet' || selectedArtifact.kind === 'drawio') && (
                         <button
                           type="button"
                           onClick={() => onExportArtifact(selectedArtifact)}
@@ -543,6 +571,22 @@ export function ChatPanel({
                 <span>{isStreaming ? streamStatus : 'Enter 发送 · Shift+Enter 换行'}</span>
               </div>
             </div>
+            {attachments.length > 0 && (
+              <div className="mb-1 flex flex-wrap gap-2 px-3">
+                {attachments.map((attachment) => (
+                  <div key={attachment.id} className="inline-flex max-w-full items-center gap-2 rounded-full border border-black/8 bg-[#f8f5ee] px-3 py-1.5 text-[11px] text-surface-600">
+                    {attachment.kind === 'image' ? <ImageIcon className="h-3.5 w-3.5 text-violet-500" /> : <FileEdit className="h-3.5 w-3.5 text-emerald-600" />}
+                    <span className="max-w-[180px] truncate">{attachment.name}</span>
+                    <span className="text-surface-400">{Math.max(1, Math.round((attachment.size || 0) / 1024))} KB</span>
+                    {!isStreaming && (
+                      <button type="button" onClick={() => onRemoveAttachment(attachment.id)} className="rounded-full p-0.5 text-surface-400 hover:bg-white hover:text-surface-700">
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex items-end gap-2">
               <textarea
                 ref={textareaRef}
@@ -565,14 +609,24 @@ export function ChatPanel({
                   <Square className="h-4 w-4 fill-current" />
                 </button>
               ) : (
-                <button
-                  onClick={onSend}
-                  disabled={!input.trim()}
-                  className="mb-1 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-950 text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-surface-800 disabled:translate-y-0 disabled:bg-surface-200 disabled:text-surface-400"
-                  title="发送"
-                >
-                  <Send className="h-4 w-4" />
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={onPickAttachments}
+                    className="mb-1 inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-black/8 bg-[#f8f5ee] text-surface-700 transition-all hover:-translate-y-0.5 hover:bg-white"
+                    title="上传文件"
+                  >
+                    <Paperclip className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={onSend}
+                    disabled={!input.trim() && attachments.length === 0}
+                    className="mb-1 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-950 text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-surface-800 disabled:translate-y-0 disabled:bg-surface-200 disabled:text-surface-400"
+                    title="发送"
+                  >
+                    <Send className="h-4 w-4" />
+                  </button>
+                </>
               )}
             </div>
           </div>

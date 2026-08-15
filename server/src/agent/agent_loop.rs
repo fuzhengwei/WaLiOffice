@@ -3,24 +3,45 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::llm::{LlmClient, FunctionDef};
-use crate::models::{ChatMessage, Artifact};
-use super::tool::{ToolContext, ToolResult, ToolArtifact};
-use super::registry::REGISTRY;
 use super::context::{compact_context, DEFAULT_CONTEXT_CONFIG};
+use super::registry::REGISTRY;
+use super::tool::{ToolArtifact, ToolContext, ToolResult};
+use crate::llm::{FunctionDef, LlmClient};
+use crate::models::{Artifact, ChatMessage};
 
 /// Agent 事件（通过 channel 向上层推送）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AgentEvent {
-    Thinking { content: String },
-    ToolCall { tool: String, input: serde_json::Value },
-    ToolResult { tool: String, success: bool, result: serde_json::Value, error: Option<String> },
-    Artifact { artifact: Artifact },
-    Message { content: String },
-    TurnEnd { turn: usize },
-    Done { summary: String, artifacts: Vec<Artifact> },
-    Error { message: String },
+    Thinking {
+        content: String,
+    },
+    ToolCall {
+        tool: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool: String,
+        success: bool,
+        result: serde_json::Value,
+        error: Option<String>,
+    },
+    Artifact {
+        artifact: Artifact,
+    },
+    Message {
+        content: String,
+    },
+    TurnEnd {
+        turn: usize,
+    },
+    Done {
+        summary: String,
+        artifacts: Vec<Artifact>,
+    },
+    Error {
+        message: String,
+    },
 }
 
 /// Agent 配置
@@ -55,42 +76,56 @@ const DEFAULT_SYSTEM_PROMPT: &str = r#"你是一个智能办公 Agent。你可�
 - 没有工具需要调用时，返回简洁的自然语言回复
 - 不要在文本中模拟工具调用结果"#;
 
-const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮助用户生成 PPT、文档、表格、流程图和图片提示词。
+const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮助用户生成 PPT、Word 文档、Markdown 文档、表格、流程图和图片结果。
 
 ## 可用工具
 - ppt_plan: 规划 PPT 大纲（只读，不产生最终产物）
 - ppt_generate: 生成完整 PPT 项目（含视觉设计）
-- doc_generate: 生成 Markdown 文档（报告/计划/总结/文章/PRD）
+- doc_generate: 生成结构化 Word 文档（报告/计划/总结/文章/PRD）
+- md_generate: 生成 Markdown 文档（知识库/README/说明文档/纪要/调研整理）
 - sheet_generate: 生成结构化表格（可导出 Excel）
 - drawio_generate: 生成 draw.io 可编辑图表（流程图/架构图等）
-- image_prompt: 生成图片提示词草案
+- image_prompt: 生成图片结果，包含多风格提示词和可直接预览的图片链接
 - web_search: 联网搜索公开网页资料，适合查找最新信息、官网说明、新闻和政策
 
 ## 意图识别规则
 - PPT/演示文稿/幻灯片/presentation/汇报材料/做个PPT → 先调 ppt_plan 再调 ppt_generate
-- 文档/报告/PRD/方案/纪要/文章/docx/markdown → doc_generate
+- Word/文档/报告/PRD/方案/docx → doc_generate
+- Markdown/md/README/知识库/说明文档/操作手册/会议纪要/调研整理 → md_generate
 - excel/xlsx/表格/数据分析/排期/预算/数据指标 → sheet_generate
 - draw.io/流程图/架构图/泳道图/拓扑图/ER图 → drawio_generate
 - 图片/图像/海报/封面/logo/配图 → image_prompt
 - 用户需要“最新”“官网”“新闻”“政策”“联网查询”“检索资料”“搜索一下”等外部信息时 → web_search
+- 当用户上传了 md/txt 附件时，要优先把附件正文视作本轮输入上下文，再决定是否继续调用工具
 - 用户说"做个XX"但未明确类型时，根据内容判断最合适的产物形式
 - 用户明确要求多个交付物时（例如“PPT + 流程图 + 文档”），要拆解成多个子任务，按顺序调用所有对应工具，不要只生成其中一种
 
 ## 工作原则
 1. PPT 任务：先调用 ppt_plan 规划大纲，再调用 ppt_generate 生成幻灯片（两步缺一不可）
 2. 其他任务：直接调用对应工具
-3. 综合任务：优先遵循用户显式指定的文件类型，可在同一轮中顺序调用多个工具，常见组合如 `ppt_plan -> ppt_generate -> drawio_generate -> doc_generate`
+3. 综合任务：优先遵循用户显式指定的文件类型，可在同一轮中顺序调用多个工具，常见组合如 `ppt_plan -> ppt_generate -> drawio_generate -> doc_generate` 或 `web_search -> md_generate`
 4. 当用户同时要多个文件时，优先完整交付多个文件，不要把结果合并成一句普通文本
 5. 工具总数以完成任务为准，尽量控制在 5 个以内；只有 PPT 必须占用 2 个工具
-6. 用户需求模糊时，先简短询问再行动
-7. 需要引用外部资料时，优先先调用 web_search，再基于搜索结果继续生成文档、PPT 或其他产物
-8. 工具执行完毕后，简洁总结结果给用户，并说明已经生成了哪些文件
-9. 如果调用了 web_search，回答中要基于搜索结果组织信息，不要假装亲自访问了不存在的页面
-10. 不要在文本中模拟工具调用结果
+6. 用户需求缺少少量信息时，优先做合理默认假设并继续生成，例如默认受众、篇幅、风格、表格字段；只有缺失信息会显著影响结果质量时才提问
+7. 生成内容必须接近可直接交付的质量，不要只输出空泛提纲、模板占位符或“请补充内容”
+8. 需要引用外部资料时，优先先调用 web_search，再基于搜索结果继续生成文档、PPT 或其他产物
+9. 工具执行完毕后，简洁总结结果给用户，并说明已经生成了哪些文件，以及每个产物适合怎样使用
+10. 如果调用了 web_search，回答中要基于搜索结果组织信息，不要假装亲自访问了不存在的页面
+11. 如果用户上传的是图片附件，而当前上下文只提供了图片元信息没有视觉识别结果，应明确说明这一点，并引导用户补充图片中的文字或关键内容
+12. 不要在文本中模拟工具调用结果
 额外要求：
 - 如果用户说“综合”“一起生成”“并且再来一个”“同时给我”，默认考虑多文件交付
 - 如果用户既要可视化说明又要汇报材料，优先同时生成 draw.io 和 PPT
-- 如果用户要方案/汇报材料并希望可下载，优先生成 document 或 sheet 作为正式文件产物"#;
+- 如果用户要方案/汇报材料并希望可下载，优先生成 document、markdown 或 sheet 作为正式文件产物
+- 如果内容更适合知识沉淀、教程说明、README 或调研整理，优先生成 markdown 产物
+- 常见业务场景包括：产品方案、运营复盘、销售汇报、技术设计、培训课件、项目实施；要主动贴近这些场景组织产物
+- 对不同产物的质量预期：
+  - PPT：要有清晰叙事节奏、页面目标、适合演示的标题和要点密度
+  - Word：要有完整章节、论证、表格和正式措辞
+  - Markdown：要便于阅读与沉淀，结构清楚，示例充分
+  - Excel：字段要真实可用，行列设计要支持实际分析或执行
+  - draw.io：节点层次和关系要清楚，布局整齐，适合继续编辑
+  - 图片结果：要有可直接预览的图像链接，同时保留风格化提示词，方便继续优化"#;
 
 /// 运行 Agent 循环，通过 channel 推送事件
 pub async fn run_agent_loop(
@@ -181,7 +216,11 @@ pub async fn run_agent_loop(
                     .clone()
                     .unwrap_or_else(|| "我已完成你的请求。".to_string());
 
-                let _ = tx.send(AgentEvent::Message { content: content.clone() }).await;
+                let _ = tx
+                    .send(AgentEvent::Message {
+                        content: content.clone(),
+                    })
+                    .await;
                 let _ = tx
                     .send(AgentEvent::Done {
                         summary: content,
@@ -211,14 +250,16 @@ pub async fn run_agent_loop(
                 tool_calls: Some(
                     tool_calls
                         .iter()
-                        .map(|tc| serde_json::json!({
-                            "id": tc.id,
-                            "type": tc.call_type,
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            }
-                        }))
+                        .map(|tc| {
+                            serde_json::json!({
+                                "id": tc.id,
+                                "type": tc.call_type,
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                }
+                            })
+                        })
                         .collect(),
                 ),
                 tool_call_id: None,
@@ -227,7 +268,8 @@ pub async fn run_agent_loop(
             // 逐个执行工具调用
             for tc in tool_calls {
                 let tool_name = &tc.function.name;
-                let input: serde_json::Value = serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
+                let input: serde_json::Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
 
                 let _ = tx
                     .send(AgentEvent::ToolCall {
@@ -243,7 +285,11 @@ pub async fn run_agent_loop(
                     Some(tool) => tool.call(input.clone(), &ctx).await,
                     None => ToolResult::err(format!(
                         "工具 \"{tool_name}\" 未注册。可用工具: {}",
-                        all_tools.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ")
+                        all_tools
+                            .iter()
+                            .map(|t| t.name())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )),
                 };
 
@@ -317,8 +363,17 @@ pub async fn run_agent_loop(
                     .and_then(|c| c.message.content.as_deref())
                     .unwrap_or("任务已完成。")
                     .to_string();
-                let _ = tx.send(AgentEvent::Message { content: content.clone() }).await;
-                let _ = tx.send(AgentEvent::Done { summary: content, artifacts: all_artifacts }).await;
+                let _ = tx
+                    .send(AgentEvent::Message {
+                        content: content.clone(),
+                    })
+                    .await;
+                let _ = tx
+                    .send(AgentEvent::Done {
+                        summary: content,
+                        artifacts: all_artifacts,
+                    })
+                    .await;
             }
             Err(e) => {
                 warn!("[AgentLoop] summary generation failed: {e}");
@@ -338,6 +393,7 @@ pub async fn run_agent_loop(
 fn map_artifact_to_tool_kind(kind: &str) -> String {
     match kind {
         "document" => "doc",
+        "search" => "general",
         "ppt" => "ppt",
         "drawio" => "drawio",
         "sheet" => "excel",

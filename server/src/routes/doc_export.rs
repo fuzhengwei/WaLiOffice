@@ -74,7 +74,10 @@ fn export_response(path: &std::path::Path, filename: &str) -> Response {
         .header(header::CONTENT_TYPE, mime.as_ref())
         .header(
             header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}\"; filename*=UTF-8''{}", filename, encoded),
+            format!(
+                "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+                filename, encoded
+            ),
         )
         .body(Body::from(data))
         .unwrap()
@@ -85,5 +88,9 @@ fn sanitize_filename(name: &str) -> String {
         .chars()
         .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
         .collect();
-    if cleaned.is_empty() { "output".to_string() } else { cleaned }
+    if cleaned.is_empty() {
+        "output".to_string()
+    } else {
+        cleaned
+    }
 }

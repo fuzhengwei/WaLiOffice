@@ -1,5 +1,5 @@
-use crate::models::ChatMessage;
 use crate::llm::LlmClient;
+use crate::models::ChatMessage;
 
 #[derive(Clone)]
 pub struct ContextConfig {
@@ -22,7 +22,10 @@ pub fn estimate_tokens(messages: &[ChatMessage]) -> usize {
         .iter()
         .map(|msg| {
             let content = &msg.content;
-            let chinese = content.chars().filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c)).count();
+            let chinese = content
+                .chars()
+                .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
+                .count();
             let other = content.chars().count() - chinese;
             chinese * 2 + (other as f64 * 0.25) as usize
         })
@@ -71,7 +74,13 @@ pub async fn summary_compact(
     let old_content: String = old_messages
         .iter()
         .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| format!("[{}]: {}", m.role, m.content.chars().take(300).collect::<String>()))
+        .map(|m| {
+            format!(
+                "[{}]: {}",
+                m.role,
+                m.content.chars().take(300).collect::<String>()
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
 

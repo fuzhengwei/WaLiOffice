@@ -43,15 +43,24 @@ impl LlmClient {
                 if !profile.base_url.trim().is_empty() {
                     client.base_url = profile.base_url.trim_end_matches('/').to_string();
                 }
-                if let Some(api_key) = profile.api_key.as_ref().filter(|item| !item.trim().is_empty()) {
+                if let Some(api_key) = profile
+                    .api_key
+                    .as_ref()
+                    .filter(|item| !item.trim().is_empty())
+                {
                     client.api_key = api_key.clone();
                 }
 
-                let requested_model = preferred_model.filter(|model| profile.models.iter().any(|item| item == *model));
+                let requested_model = preferred_model
+                    .filter(|model| profile.models.iter().any(|item| item == *model));
                 client.model = requested_model
                     .map(|item| item.to_string())
                     .or_else(|| {
-                        if profile.models.iter().any(|item| item == &settings.active_model) {
+                        if profile
+                            .models
+                            .iter()
+                            .any(|item| item == &settings.active_model)
+                        {
                             Some(settings.active_model.clone())
                         } else {
                             None
@@ -110,7 +119,8 @@ impl LlmClient {
 
     /// 提取 JSON（容错：去 markdown fence、截取首尾花括号）
     pub fn extract_json(text: &str) -> Result<serde_json::Value> {
-        let cleaned = text.trim()
+        let cleaned = text
+            .trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")

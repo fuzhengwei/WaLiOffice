@@ -1,7 +1,17 @@
 // ===== 工具智能体 =====
 export type ToolKind = 'general' | 'ppt' | 'doc' | 'drawio' | 'excel' | 'image' | 'code';
 
-export type ArtifactKind = 'document' | 'ppt' | 'drawio' | 'sheet' | 'image' | 'code' | 'mixed';
+export type ArtifactKind = 'document' | 'markdown' | 'ppt' | 'drawio' | 'sheet' | 'image' | 'code' | 'mixed' | 'search';
+
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  kind: 'text' | 'image';
+  mime_type: string;
+  size: number;
+  text_content?: string;
+  data_url?: string;
+}
 
 export interface LLMProfile {
   id: string;
@@ -169,6 +179,7 @@ export interface ChatMessage {
   timestamp: string;
   action?: string;
   slide_id?: string;
+  attachments?: ChatAttachment[];
 }
 
 // ===== 用户 =====

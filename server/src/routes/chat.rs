@@ -6,15 +6,15 @@ use axum::{Json, Router};
 use futures::stream::Stream;
 use std::convert::Infallible;
 use std::time::Duration;
-use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::StreamExt;
 
 use crate::agent::{run_agent_loop, AgentConfig, AgentEvent};
-use crate::error::AppError;
-use crate::models::{Artifact, ChatMessage, ChatRequest};
 use crate::auth::middleware::AuthUser;
-use crate::state;
 use crate::db::session_repo;
+use crate::error::AppError;
+use crate::models::{Artifact, ChatAttachment, ChatMessage, ChatRequest};
+use crate::state;
 
 pub fn router() -> Router {
     Router::new().route("/api/chat/stream", post(chat_stream))
@@ -31,11 +31,11 @@ fn looks_like_markdown_document(content: &str) -> bool {
         || trimmed.contains("\n|")
 }
 
-fn build_summary_document_artifact(summary: &str, tool_kind: Option<&str>) -> Artifact {
+fn build_summary_markdown_artifact(summary: &str, tool_kind: Option<&str>) -> Artifact {
     let now = chrono::Utc::now().to_rfc3339();
     Artifact {
         id: uuid::Uuid::new_v4().to_string(),
-        kind: "document".into(),
+        kind: "markdown".into(),
         tool_kind: tool_kind.unwrap_or("doc").to_string(),
         title: "对话整理结果".into(),
         status: "ready".into(),
@@ -50,20 +50,100 @@ fn build_summary_document_artifact(summary: &str, tool_kind: Option<&str>) -> Ar
     }
 }
 
+fn format_attachment_context(attachments: &[ChatAttachment]) -> String {
+    if attachments.is_empty() {
+        return String::new();
+    }
+
+    let sections = attachments
+        .iter()
+        .enumerate()
+        .map(|(index, attachment)| {
+            if attachment.kind == "text" {
+                let text = attachment
+                    .text_content
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .chars()
+                    .take(12_000)
+                    .collect::<String>();
+
+                format!(
+                    "附件 {}（文本）\n- 文件名：{}\n- MIME：{}\n- 大小：{} 字节\n- 正文开始\n{}\n- 正文结束",
+                    index + 1,
+                    attachment.name,
+                    attachment.mime_type,
+                    attachment.size,
+                    text
+                )
+            } else {
+                format!(
+                    "附件 {}（图片）\n- 文件名：{}\n- MIME：{}\n- 大小：{} 字节\n- 说明：当前对话链路已接收到图片附件，但此版本主要将图片作为附件上下文与预览信息传递；如果用户需要精确识别图片内容，应引导用户补充图片文字说明或后续接入多模态模型。",
+                    index + 1,
+                    attachment.name,
+                    attachment.mime_type,
+                    attachment.size
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    format!(
+        "用户本次还上传了 {} 个附件，请将它们视作本轮对话输入的一部分，并优先结合附件内容回答：\n\n{}",
+        attachments.len(),
+        sections
+    )
+}
+
+fn build_user_message(req: &ChatRequest) -> String {
+    let base = req.message.trim();
+    let attachment_context = req
+        .attachments
+        .as_deref()
+        .map(format_attachment_context)
+        .unwrap_or_default();
+
+    match (base.is_empty(), attachment_context.is_empty()) {
+        (false, true) => base.to_string(),
+        (true, false) => attachment_context,
+        (false, false) => format!("{base}\n\n{attachment_context}"),
+        (true, true) => String::new(),
+    }
+}
+
 async fn chat_stream(
     user: AuthUser,
     Json(req): Json<ChatRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let pool = state::db_pool();
-    let client = std::sync::Arc::new(crate::llm::LlmClient::for_user(&user.0.id, req.model.as_deref()));
+    let client = std::sync::Arc::new(crate::llm::LlmClient::for_user(
+        &user.0.id,
+        req.model.as_deref(),
+    ));
 
     // 创建或获取会话
     let session = if let Some(ref sid) = req.session_id {
-        session_repo::find_by_id(&pool, sid)?
-            .ok_or(AppError::NotFound("会话不存在".into()))?
+        session_repo::find_by_id(&pool, sid)?.ok_or(AppError::NotFound("会话不存在".into()))?
     } else {
-        let title: String = req.message.chars().take(30).collect();
-        session_repo::create(&pool, &user.0.id, req.project_id.as_deref(), req.tool_kind.as_deref(), &title)?
+        let title_source = if req.message.trim().is_empty() {
+            req.attachments
+                .as_deref()
+                .and_then(|items| items.first())
+                .map(|item| format!("围绕附件：{}", item.name))
+                .unwrap_or_else(|| "新的办公对话".to_string())
+        } else {
+            req.message.clone()
+        };
+        let title: String = title_source.chars().take(30).collect();
+        session_repo::create(
+            &pool,
+            &user.0.id,
+            req.project_id.as_deref(),
+            req.tool_kind.as_deref(),
+            &title,
+        )?
     };
 
     let session_id = session.id.clone();
@@ -86,7 +166,7 @@ async fn chat_stream(
     // clone 必要数据给 agent 任务
     let user_id = user.0.id.clone();
     let project_id = req.project_id.clone();
-    let user_message = req.message.clone();
+    let user_message = build_user_message(&req);
     let agent_config = AgentConfig {
         max_turns: 6,
         system_prompt: String::new(), // 使用默认 OFFICE_AGENT_PROMPT
@@ -109,9 +189,22 @@ async fn chat_stream(
 
     let session_id_for_save = session_id.clone();
     let pool_for_save = pool.clone();
+    if let Some(attachments) = req.attachments.as_ref() {
+        ctx.send(
+            "state_update",
+            serde_json::json!({
+                "phase": "running",
+                "step": "接收附件",
+                "detail": format!("已接收 {} 个附件（支持 md / txt / 图片）", attachments.len()),
+                "attachment_count": attachments.len(),
+                "at": chrono::Utc::now().to_rfc3339(),
+            }),
+        );
+    }
 
     // 启动 agent 循环
-    let mut event_rx = run_agent_loop(history, user_message, ctx, agent_config, client.clone()).await;
+    let mut event_rx =
+        run_agent_loop(history, user_message, ctx, agent_config, client.clone()).await;
     let requested_tool_kind = req.tool_kind.clone();
 
     tokio::spawn(async move {
@@ -177,7 +270,7 @@ async fn chat_stream(
                     if collected_artifacts.is_empty()
                         && (requested_tool_kind.as_deref() == Some("doc") || looks_like_markdown_document(&summary))
                     {
-                        collected_artifacts.push(build_summary_document_artifact(&summary, requested_tool_kind.as_deref()));
+                        collected_artifacts.push(build_summary_markdown_artifact(&summary, requested_tool_kind.as_deref()));
                     }
                     let _ = session_repo::update_summary(
                         &pool_for_save,
@@ -207,7 +300,8 @@ async fn chat_stream(
                     tool_calls: None,
                     tool_call_id: None,
                 };
-                let _ = session_repo::add_message(&pool_for_save, &session_id_for_save, &assistant_msg);
+                let _ =
+                    session_repo::add_message(&pool_for_save, &session_id_for_save, &assistant_msg);
             }
         }
     });

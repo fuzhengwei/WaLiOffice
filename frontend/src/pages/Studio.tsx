@@ -8,7 +8,7 @@ import { ConversationSidebar } from '@/components/history/ConversationSidebar'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { Sparkles, Play, X, PanelRightClose, PanelRight } from 'lucide-react'
-import type { Artifact, ConversationRecord, ToolKind, ProjectMeta, AppSettings, LLMProfile, PersistedSession } from '@/types'
+import type { Artifact, ConversationRecord, ToolKind, ProjectMeta, AppSettings, LLMProfile, PersistedSession, ChatAttachment } from '@/types'
 
 function buildRestoredMessages(session: PersistedSession) {
   const restored = (session.messages || [])
@@ -90,6 +90,7 @@ export default function Studio() {
   const [streamStatus, setStreamStatus] = useState('空闲')
   const [streamPhase, setStreamPhase] = useState<'idle' | 'thinking' | 'generating' | 'finishing' | 'done' | 'error'>('idle')
   const [processLogs, setProcessLogs] = useState<string[]>([])
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([])
 
   // 设置 & 模型
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -100,6 +101,7 @@ export default function Studio() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const autoExportedArtifactIdsRef = useRef<Set<string>>(new Set())
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -337,6 +339,89 @@ export default function Studio() {
     setFollowLatestSlide(index >= Math.max(0, slideCount - 1))
   }
 
+  const readFileAsText = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+      reader.onerror = () => reject(reader.error || new Error(`读取文件失败：${file.name}`))
+      reader.readAsText(file, 'utf-8')
+    })
+
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+      reader.onerror = () => reject(reader.error || new Error(`读取图片失败：${file.name}`))
+      reader.readAsDataURL(file)
+    })
+
+  const buildAttachmentFromFile = async (file: File): Promise<ChatAttachment | null> => {
+    const lowerName = file.name.toLowerCase()
+    const isMarkdown = lowerName.endsWith('.md') || file.type === 'text/markdown'
+    const isText = lowerName.endsWith('.txt') || file.type === 'text/plain'
+    const isImage = file.type.startsWith('image/')
+
+    if (isMarkdown || isText) {
+      const textContent = await readFileAsText(file)
+      return {
+        id: `${Date.now()}-${crypto.randomUUID()}`,
+        name: file.name,
+        kind: 'text',
+        mime_type: file.type || (isMarkdown ? 'text/markdown' : 'text/plain'),
+        size: file.size,
+        text_content: textContent.slice(0, 20000),
+      }
+    }
+
+    if (isImage) {
+      const dataUrl = await readFileAsDataUrl(file)
+      return {
+        id: `${Date.now()}-${crypto.randomUUID()}`,
+        name: file.name,
+        kind: 'image',
+        mime_type: file.type || 'image/png',
+        size: file.size,
+        data_url: dataUrl,
+      }
+    }
+
+    return null
+  }
+
+  const handlePickAttachments = () => {
+    if (isStreaming) return
+    attachmentInputRef.current?.click()
+  }
+
+  const handleAttachmentChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || [])
+    event.target.value = ''
+
+    if (files.length === 0) return
+
+    try {
+      const nextItems = (await Promise.all(files.map(buildAttachmentFromFile))).filter(Boolean) as ChatAttachment[]
+      const unsupported = files.length - nextItems.length
+      if (unsupported > 0) {
+        alert('目前支持上传 md、txt 和图片文件。')
+      }
+      if (nextItems.length === 0) return
+
+      setAttachments((current) => {
+        const merged = [...current, ...nextItems]
+        const deduped = merged.filter((item, index, arr) => arr.findIndex((target) => target.name === item.name && target.size === item.size) === index)
+        return deduped.slice(0, 6)
+      })
+    } catch (err) {
+      console.error('Read attachment error:', err)
+      alert('读取附件失败，请检查文件编码或重新选择文件。')
+    }
+  }
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments((current) => current.filter((item) => item.id !== id))
+  }
+
   const applyRealtimePptState = (payload: {
     project_id?: string
     title?: string
@@ -404,7 +489,7 @@ export default function Studio() {
     const hits: ToolKind[] = []
     if (/draw\.io|drawio|流程图|架构图|泳道图|拓扑图|er图/.test(lower)) hits.push('drawio')
     if (/excel|xlsx|表格|数据分析|公式|在线表/.test(lower)) hits.push('excel')
-    if (/文档|报告|prd|方案|纪要|文章|docx|markdown/.test(lower)) hits.push('doc')
+    if (/文档|报告|prd|方案|纪要|文章|docx|markdown|readme|知识库|说明文档|操作手册|md\b/.test(lower)) hits.push('doc')
     if (/ppt|演示文稿|幻灯片|presentation|做个.*汇报|生成.*汇报|制作.*汇报|汇报材料/.test(lower)) hits.push('ppt')
     if (/图片|图像|海报|封面|logo|配图/.test(lower)) hits.push('image')
     const wantsMultiple = /同时|一起|并且|再来|外加|附上|配一张|再补一个|多个|一套/.test(lower)
@@ -415,18 +500,24 @@ export default function Studio() {
   }
 
   const handleSend = async () => {
-    if (!input.trim() || isStreaming) return
+    if ((!input.trim() && attachments.length === 0) || isStreaming) return
 
-    const message = input.trim()
+    const message = input.trim() || '请结合我上传的文件内容继续处理。'
+    const pendingAttachments = attachments
     const inferredTool = inferToolFromMessage(message)
     if (inferredTool !== activeTool) setActiveTool(inferredTool)
     setInput('')
+    setAttachments([])
     setStreaming(true)
     setFollowLatestSlide(true)
     setPptProgress(null)
     setStreamPhase('thinking')
-    setStreamStatus('正在理解需求...')
-    setProcessLogs(['开始处理请求', `识别工具：${inferredTool}`])
+    setStreamStatus(pendingAttachments.length > 0 ? '正在整理消息与附件...' : '正在理解需求...')
+    setProcessLogs([
+      '开始处理请求',
+      `识别工具：${inferredTool}`,
+      ...(pendingAttachments.length > 0 ? [`附件：已接收 ${pendingAttachments.length} 个文件`] : []),
+    ])
     const abortController = new AbortController()
     abortRef.current = abortController
 
@@ -434,10 +525,12 @@ export default function Studio() {
       role: 'user',
       content: message,
       timestamp: new Date().toISOString(),
+      attachments: pendingAttachments,
     })
 
     const token = useAuthStore.getState().token
     if (!token) {
+      setAttachments(pendingAttachments)
       setStreaming(false)
       setStreamPhase('error')
       setStreamStatus('登录失效')
@@ -465,6 +558,7 @@ export default function Studio() {
         selectedTheme,
         inferredTool,
         selectedModel,
+        pendingAttachments,
         (event, data) => {
           switch (event) {
             case 'message':
@@ -563,6 +657,18 @@ export default function Studio() {
                     setProcessLogs((logs) => [...logs.slice(-8), 'Word：自动导出失败，请点击右侧按钮重试'])
                   })
                 }
+                if (
+                  data.artifact.kind === 'markdown' &&
+                  data.artifact.content?.export_requested &&
+                  !autoExportedArtifactIdsRef.current.has(data.artifact.id)
+                ) {
+                  autoExportedArtifactIdsRef.current.add(data.artifact.id)
+                  setProcessLogs((logs) => [...logs.slice(-8), 'Markdown：正在自动下载 MD'])
+                  Promise.resolve(handleExportMarkdown(data.artifact)).catch((err) => {
+                    console.error('Auto Markdown export error:', err)
+                    setProcessLogs((logs) => [...logs.slice(-8), 'Markdown：自动下载失败，请点击右侧按钮重试'])
+                  })
+                }
               }
               break
 
@@ -620,6 +726,9 @@ export default function Studio() {
       console.error('Chat error:', err)
       const aborted = err instanceof DOMException && err.name === 'AbortError'
       const errorMessage = err instanceof Error ? err.message : '发生了未知错误'
+      if (!aborted && pendingAttachments.length > 0) {
+        setAttachments(pendingAttachments)
+      }
       setStreamPhase(aborted ? 'idle' : 'error')
       setStreamStatus(aborted ? '已停止生成' : errorMessage)
       setPptProgress(null)
@@ -721,6 +830,22 @@ export default function Studio() {
     }
   }
 
+  const handleExportMarkdown = (artifact: Artifact) => {
+    try {
+      const markdown = artifact.content?.markdown || ''
+      if (!markdown.trim()) {
+        alert('当前 Markdown 文档暂无可下载内容')
+        return
+      }
+      const safeTitle = (artifact.title || 'document').replace(/[\\/:*?"<>|]/g, '_')
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+      downloadBlob(blob, `${safeTitle}.md`)
+    } catch (err) {
+      console.error('Markdown export error:', err)
+      alert('Markdown 下载失败，请重试')
+    }
+  }
+
   const handleOpenArtifact = (artifactId: string) => {
     setActiveArtifact(artifactId)
     setShowArtifactPanel(true)
@@ -746,6 +871,10 @@ export default function Studio() {
   const handleExportArtifact = async (artifact: Artifact) => {
     if (artifact.kind === 'document') {
       await handleExportDocx(artifact)
+      return
+    }
+    if (artifact.kind === 'markdown') {
+      handleExportMarkdown(artifact)
       return
     }
     if (artifact.kind === 'sheet') {
@@ -882,6 +1011,9 @@ export default function Studio() {
                 onInputChange={setInput}
                 onSend={handleSend}
                 onStop={handleStop}
+                attachments={attachments}
+                onPickAttachments={handlePickAttachments}
+                onRemoveAttachment={handleRemoveAttachment}
                 onOpenArtifact={handleOpenArtifact}
                 onExportArtifact={handleExportArtifact}
                 messagesEndRef={messagesEndRef}
@@ -911,6 +1043,7 @@ export default function Studio() {
             onUpdateArtifact={updateArtifact}
             onExportExcel={handleExportExcel}
             onExportDocx={handleExportDocx}
+            onExportMarkdown={handleExportMarkdown}
             onExportDrawio={handleExportDrawio}
           />
         )}
@@ -923,6 +1056,14 @@ export default function Studio() {
           onClose={() => setShowPresent(false)}
         />
       )}
+      <input
+        ref={attachmentInputRef}
+        type="file"
+        accept=".md,.txt,text/markdown,text/plain,image/*"
+        multiple
+        className="hidden"
+        onChange={handleAttachmentChange}
+      />
     </div>
   )
 }

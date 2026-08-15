@@ -1,9 +1,9 @@
-pub mod user_repo;
-pub mod session_repo;
-pub mod project_repo;
-pub mod task_repo;
 pub mod notification_repo;
+pub mod project_repo;
+pub mod session_repo;
 pub mod settings_repo;
+pub mod task_repo;
+pub mod user_repo;
 
 use anyhow::Result;
 use r2d2::Pool;
@@ -19,9 +19,7 @@ pub fn init_pool(data_dir: &str) -> Result<DbPool> {
     fs::create_dir_all(data_dir)?;
     let db_path = format!("{data_dir}/walioffice.db");
     let manager = SqliteConnectionManager::file(&db_path);
-    let pool = Pool::builder()
-        .max_size(8)
-        .build(manager)?;
+    let pool = Pool::builder().max_size(8).build(manager)?;
 
     run_migrations(&pool)?;
     info!("📦 SQLite 数据库已初始化: {db_path}");
@@ -51,7 +49,15 @@ fn run_migrations(pool: &DbPool) -> Result<()> {
         conn.execute(
             "INSERT INTO users (id, username, email, password_hash, role, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![id, &admin_username, "admin@walioffice.local", &hash, "admin", &now, &now],
+            params![
+                id,
+                &admin_username,
+                "admin@walioffice.local",
+                &hash,
+                "admin",
+                &now,
+                &now
+            ],
         )?;
         info!("✅ 已初始化管理员账号: {admin_username} / {admin_password}");
     }

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth-store';
-import type { TokenResponse, ToolKind, Artifact, PersistedSession, AppSettings, MCPServiceConfig } from '@/types';
+import type { TokenResponse, ToolKind, Artifact, PersistedSession, AppSettings, MCPServiceConfig, ChatAttachment } from '@/types';
 
 const API_BASE = '/api';
 
@@ -164,6 +164,7 @@ export const chatApi = {
     theme: string | null,
     toolKind: ToolKind,
     model: string | null,
+    attachments: ChatAttachment[],
     onEvent: (event: string, data: any) => void,
     token: string,
     signal?: AbortSignal
@@ -181,6 +182,7 @@ export const chatApi = {
         theme,
         tool_kind: toolKind,
         model,
+        attachments,
       }),
       signal,
     });

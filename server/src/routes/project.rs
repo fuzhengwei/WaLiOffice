@@ -13,12 +13,23 @@ use crate::state;
 pub fn router() -> Router {
     Router::new()
         .route("/api/projects", get(list_projects).post(create_project))
-        .route("/api/projects/:project_id", get(get_project).patch(update_project).delete(delete_project))
-        .route("/api/projects/:project_id/sessions", get(get_project_sessions))
+        .route(
+            "/api/projects/:project_id",
+            get(get_project)
+                .patch(update_project)
+                .delete(delete_project),
+        )
+        .route(
+            "/api/projects/:project_id/sessions",
+            get(get_project_sessions),
+        )
         .route("/api/ppt/projects", get(list_ppt_projects))
         .route("/api/ppt/project/:project_id", get(get_ppt_project))
         .route("/api/ppt/project", post(create_ppt_project))
-        .route("/api/ppt/project/:project_id/delete", post(delete_ppt_project))
+        .route(
+            "/api/ppt/project/:project_id/delete",
+            post(delete_ppt_project),
+        )
 }
 
 #[derive(Deserialize)]
@@ -26,7 +37,10 @@ struct ProjectListQuery {
     q: Option<String>,
 }
 
-async fn list_projects(user: AuthUser, Query(query): Query<ProjectListQuery>) -> Result<Json<serde_json::Value>, AppError> {
+async fn list_projects(
+    user: AuthUser,
+    Query(query): Query<ProjectListQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
     let projects = project_repo::list_by_owner(&pool, &user.0.id, query.q.as_deref())?;
     Ok(Json(json!({ "projects": projects })))
@@ -41,9 +55,17 @@ struct CreateGenericProjectReq {
     tool_kind: Option<String>,
 }
 
-async fn create_project(user: AuthUser, Json(req): Json<CreateGenericProjectReq>) -> Result<Json<serde_json::Value>, AppError> {
+async fn create_project(
+    user: AuthUser,
+    Json(req): Json<CreateGenericProjectReq>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let project = project_repo::create(&pool, &req.title, req.tool_kind.as_deref().unwrap_or("general"), &user.0.id)?;
+    let project = project_repo::create(
+        &pool,
+        &req.title,
+        req.tool_kind.as_deref().unwrap_or("general"),
+        &user.0.id,
+    )?;
     if req.description.is_some() {
         let updated = project_repo::update(
             &pool,
@@ -58,7 +80,10 @@ async fn create_project(user: AuthUser, Json(req): Json<CreateGenericProjectReq>
     Ok(Json(json!(project)))
 }
 
-async fn get_project(user: AuthUser, Path(project_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+async fn get_project(
+    user: AuthUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
     let project = project_repo::find_by_id(&pool, &project_id, &user.0.id)?
         .ok_or(AppError::NotFound("项目不存在".into()))?;
@@ -93,13 +118,19 @@ async fn update_project(
     Ok(Json(json!(project)))
 }
 
-async fn delete_project(user: AuthUser, Path(project_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+async fn delete_project(
+    user: AuthUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
     let deleted = project_repo::delete(&pool, &project_id, &user.0.id)?;
     Ok(Json(json!({ "deleted": deleted })))
 }
 
-async fn get_project_sessions(user: AuthUser, Path(project_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+async fn get_project_sessions(
+    user: AuthUser,
+    Path(project_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
     let project = project_repo::find_by_id(&pool, &project_id, &user.0.id)?
         .ok_or(AppError::NotFound("项目不存在".into()))?;
@@ -115,7 +146,9 @@ async fn list_ppt_projects(user: AuthUser) -> Result<Json<serde_json::Value>, Ap
     Ok(Json(json!({ "projects": projects })))
 }
 
-async fn get_ppt_project(Path(project_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+async fn get_ppt_project(
+    Path(project_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let project = project_repo::load_ppt_project(&project_id)?
         .ok_or(AppError::NotFound("项目不存在".into()))?;
     Ok(Json(json!(project)))
@@ -128,7 +161,10 @@ struct CreatePptProjectReq {
     theme: Option<String>,
 }
 
-async fn create_ppt_project(user: AuthUser, Json(req): Json<CreatePptProjectReq>) -> Result<Json<serde_json::Value>, AppError> {
+async fn create_ppt_project(
+    user: AuthUser,
+    Json(req): Json<CreatePptProjectReq>,
+) -> Result<Json<serde_json::Value>, AppError> {
     use crate::models::PptProject;
     let now = chrono::Utc::now().to_rfc3339();
     let project = PptProject {
@@ -146,7 +182,9 @@ async fn create_ppt_project(user: AuthUser, Json(req): Json<CreatePptProjectReq>
     Ok(Json(json!(project)))
 }
 
-async fn delete_ppt_project(Path(project_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+async fn delete_ppt_project(
+    Path(project_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let deleted = project_repo::delete_ppt_project(&project_id)?;
     Ok(Json(json!({ "deleted": deleted })))
 }

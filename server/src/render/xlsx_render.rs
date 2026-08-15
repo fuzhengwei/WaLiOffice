@@ -73,6 +73,10 @@ fn sanitize_sheet_name(name: &str) -> String {
         .chars()
         .filter(|c| !matches!(c, ':' | '\\' | '/' | '?' | '*' | '[' | ']'))
         .collect();
-    let cleaned = if cleaned.is_empty() { "Sheet".to_string() } else { cleaned };
+    let cleaned = if cleaned.is_empty() {
+        "Sheet".to_string()
+    } else {
+        cleaned
+    };
     cleaned.chars().take(31).collect()
 }

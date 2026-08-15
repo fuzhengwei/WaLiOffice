@@ -1,8 +1,8 @@
+use super::DbPool;
+use crate::error::AppResult;
 use crate::models::{Artifact, ChatMessage};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use crate::error::AppResult;
-use super::DbPool;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRow {
@@ -32,7 +32,13 @@ pub struct SessionDetail {
     pub artifacts: Vec<Artifact>,
 }
 
-pub fn create(pool: &DbPool, owner_id: &str, project_id: Option<&str>, tool_kind: Option<&str>, title: &str) -> AppResult<SessionRow> {
+pub fn create(
+    pool: &DbPool,
+    owner_id: &str,
+    project_id: Option<&str>,
+    tool_kind: Option<&str>,
+    title: &str,
+) -> AppResult<SessionRow> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -42,9 +48,15 @@ pub fn create(pool: &DbPool, owner_id: &str, project_id: Option<&str>, tool_kind
         params![id, owner_id, project_id, tool_kind, title, &now, &now],
     )?;
     Ok(SessionRow {
-        id, owner_id: owner_id.to_string(), project_id: project_id.map(String::from),
-        tool_kind: tool_kind.map(String::from), title: title.to_string(),
-        summary: None, message_count: 0, created_at: now.clone(), updated_at: now,
+        id,
+        owner_id: owner_id.to_string(),
+        project_id: project_id.map(String::from),
+        tool_kind: tool_kind.map(String::from),
+        title: title.to_string(),
+        summary: None,
+        message_count: 0,
+        created_at: now.clone(),
+        updated_at: now,
     })
 }
 
@@ -67,9 +79,16 @@ pub fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<SessionRow>> {
     }
 }
 
-pub fn list_by_owner(pool: &DbPool, owner_id: &str, limit: i64, query: Option<&str>) -> AppResult<Vec<SessionRow>> {
+pub fn list_by_owner(
+    pool: &DbPool,
+    owner_id: &str,
+    limit: i64,
+    query: Option<&str>,
+) -> AppResult<Vec<SessionRow>> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let q = query.map(|item| format!("%{}%", item.trim())).filter(|item| item != "%%");
+    let q = query
+        .map(|item| format!("%{}%", item.trim()))
+        .filter(|item| item != "%%");
     let mut result = Vec::new();
     if let Some(ref qv) = q {
         let mut stmt = conn.prepare(
@@ -78,11 +97,19 @@ pub fn list_by_owner(pool: &DbPool, owner_id: &str, limit: i64, query: Option<&s
              WHERE owner_id = ?1 AND (title LIKE ?2 OR COALESCE(summary, '') LIKE ?2)
              ORDER BY updated_at DESC LIMIT ?3"
         )?;
-        let rows = stmt.query_map(params![owner_id, qv, limit], |row| Ok(SessionRow {
-            id: row.get(0)?, owner_id: row.get(1)?, project_id: row.get(2)?, tool_kind: row.get(3)?,
-            title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?,
-            created_at: row.get(7)?, updated_at: row.get(8)?,
-        }))?;
+        let rows = stmt.query_map(params![owner_id, qv, limit], |row| {
+            Ok(SessionRow {
+                id: row.get(0)?,
+                owner_id: row.get(1)?,
+                project_id: row.get(2)?,
+                tool_kind: row.get(3)?,
+                title: row.get(4)?,
+                summary: row.get(5)?,
+                message_count: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        })?;
         for row in rows {
             result.push(row?);
         }
@@ -91,11 +118,19 @@ pub fn list_by_owner(pool: &DbPool, owner_id: &str, limit: i64, query: Option<&s
             "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, created_at, updated_at
              FROM sessions WHERE owner_id = ?1 ORDER BY updated_at DESC LIMIT ?2"
         )?;
-        let rows = stmt.query_map(params![owner_id, limit], |row| Ok(SessionRow {
-            id: row.get(0)?, owner_id: row.get(1)?, project_id: row.get(2)?, tool_kind: row.get(3)?,
-            title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?,
-            created_at: row.get(7)?, updated_at: row.get(8)?,
-        }))?;
+        let rows = stmt.query_map(params![owner_id, limit], |row| {
+            Ok(SessionRow {
+                id: row.get(0)?,
+                owner_id: row.get(1)?,
+                project_id: row.get(2)?,
+                tool_kind: row.get(3)?,
+                title: row.get(4)?,
+                summary: row.get(5)?,
+                message_count: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        })?;
         for row in rows {
             result.push(row?);
         }
@@ -123,7 +158,13 @@ pub fn save_artifacts(pool: &DbPool, session_id: &str, artifacts: &[Artifact]) -
          ON CONFLICT(session_id) DO UPDATE SET
            payload = excluded.payload,
            updated_at = excluded.updated_at",
-        params![uuid::Uuid::new_v4().to_string(), session_id, payload, &now, &now],
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            session_id,
+            payload,
+            &now,
+            &now
+        ],
     )?;
     Ok(())
 }
@@ -169,7 +210,10 @@ pub fn add_message(pool: &DbPool, session_id: &str, msg: &ChatMessage) -> AppRes
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let tool_name: Option<String> = None;
-    let tool_input: Option<String> = msg.tool_calls.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default());
+    let tool_input: Option<String> = msg
+        .tool_calls
+        .as_ref()
+        .map(|t| serde_json::to_string(t).unwrap_or_default());
     let tool_output: Option<String> = msg.tool_call_id.clone();
     conn.execute(
         "INSERT INTO messages (id, session_id, role, content, tool_name, tool_input, tool_output, created_at)
@@ -196,10 +240,17 @@ pub fn get_messages(pool: &DbPool, session_id: &str, limit: i64) -> AppResult<Ve
         let tool_output: Option<String> = row.get(3)?;
         let tool_calls = tool_input.and_then(|s| serde_json::from_str(&s).ok());
         let tool_call_id = tool_output;
-        Ok(ChatMessage { role, content, tool_calls, tool_call_id })
+        Ok(ChatMessage {
+            role,
+            content,
+            tool_calls,
+            tool_call_id,
+        })
     })?;
     let mut result = Vec::new();
-    for row in rows { result.push(row?); }
+    for row in rows {
+        result.push(row?);
+    }
     Ok(result)
 }
 
@@ -215,13 +266,20 @@ pub fn delete(pool: &DbPool, session_id: &str, owner_id: &str) -> AppResult<bool
 pub fn clear_messages(pool: &DbPool, session_id: &str, owner_id: &str) -> AppResult<bool> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     // 验证所有权
-    let session: Option<String> = conn.query_row(
-        "SELECT id FROM sessions WHERE id = ?1 AND owner_id = ?2",
-        params![session_id, owner_id],
-        |r| r.get(0),
-    ).ok();
-    if session.is_none() { return Ok(false); }
-    conn.execute("DELETE FROM messages WHERE session_id = ?1", params![session_id])?;
+    let session: Option<String> = conn
+        .query_row(
+            "SELECT id FROM sessions WHERE id = ?1 AND owner_id = ?2",
+            params![session_id, owner_id],
+            |r| r.get(0),
+        )
+        .ok();
+    if session.is_none() {
+        return Ok(false);
+    }
+    conn.execute(
+        "DELETE FROM messages WHERE session_id = ?1",
+        params![session_id],
+    )?;
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "UPDATE sessions SET message_count = 0, updated_at = ?1 WHERE id = ?2",

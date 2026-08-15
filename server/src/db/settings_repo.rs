@@ -20,7 +20,11 @@ pub fn find_by_user(pool: &DbPool, user_id: &str) -> AppResult<Option<AppSetting
     }
 }
 
-pub fn save_for_user(pool: &DbPool, user_id: &str, settings: &AppSettings) -> AppResult<AppSettings> {
+pub fn save_for_user(
+    pool: &DbPool,
+    user_id: &str,
+    settings: &AppSettings,
+) -> AppResult<AppSettings> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let now = chrono::Utc::now().to_rfc3339();
     let payload = serde_json::to_string(settings)?;
