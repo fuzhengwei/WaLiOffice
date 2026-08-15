@@ -1,6 +1,7 @@
-import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Image, LayoutDashboard, LogOut, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Settings as SettingsIcon, Sheet, Sparkles, Trash2 } from 'lucide-react'
+import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Image, LayoutDashboard, LogOut, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Settings as SettingsIcon, Sheet, Sparkles, SquareCheckBig, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, DragEvent } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import type { ChatMessage, ConversationRecord, PPTProject, ToolKind, ProjectMeta } from '@/types'
 
 const LOGO_URL = '/logo.png'
@@ -113,6 +114,8 @@ export function ConversationSidebar({
   width,
   onResizeStart,
 }: ConversationSidebarProps) {
+  const navigate = useNavigate()
+  const location = useLocation()
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [showUnassigned, setShowUnassigned] = useState(true)
   const [hovered, setHovered] = useState<string | null>(null)
@@ -167,6 +170,12 @@ export function ConversationSidebar({
       conversationsByProject: byProject,
     }
   }, [projects, currentConversations, searchQuery])
+
+  const workspaceLinks = [
+    { to: '/', label: '智能助手', icon: Sparkles, active: location.pathname === '/' },
+    { to: '/tasks', label: '任务清单', icon: SquareCheckBig, active: location.pathname.startsWith('/tasks') },
+    { to: '/files', label: '我的文件', icon: Folder, active: location.pathname.startsWith('/files') },
+  ]
 
   const toggleProject = (id: string) => {
     setExpandedProjects((prev) => {
@@ -476,6 +485,27 @@ export function ConversationSidebar({
       </div>
 
       <div className="border-t border-black/[0.07] p-3">
+        <div className="mb-2 grid grid-cols-3 gap-1.5 rounded-2xl bg-white/42 p-1 shadow-sm backdrop-blur">
+          {workspaceLinks.map((item) => {
+            const Icon = item.icon
+            return (
+              <button
+                key={item.to}
+                type="button"
+                onClick={() => navigate(item.to)}
+                className={`flex min-w-0 flex-col items-center gap-1 rounded-xl px-2 py-2 text-[10px] font-bold transition-all ${
+                  item.active
+                    ? 'bg-surface-950 text-white shadow-sm'
+                    : 'text-surface-500 hover:bg-white/80 hover:text-surface-950'
+                }`}
+                title={item.label}
+              >
+                <Icon className="h-4 w-4" />
+                <span className="truncate">{item.label}</span>
+              </button>
+            )
+          })}
+        </div>
         <div className="flex items-center gap-2 rounded-2xl bg-white/64 px-3 py-2 shadow-sm backdrop-blur">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-950 text-xs font-bold text-white">
             {userName?.[0]?.toUpperCase() || 'U'}

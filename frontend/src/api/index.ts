@@ -129,6 +129,10 @@ export const fileApi = {
     if (description) headers['x-description'] = description;
     return api.post('/files/upload', formData, { headers });
   },
+  saveBlob: (blob: Blob, filename: string, description?: string, folderId?: string) => {
+    const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+    return fileApi.upload(file, folderId, description);
+  },
   extract: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);

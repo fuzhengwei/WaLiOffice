@@ -424,6 +424,40 @@ export function ChatPanel({
   const selectedArtifactTurn = findArtifactTurnGroup(selectedArtifact?.id || null, artifactTurnGroups)
   const [expandedTurnKeys, setExpandedTurnKeys] = useState<string[]>([])
   const canSend = input.trim().length > 0 || attachments.length > 0
+  const starterCards: Array<{ title: string; desc: string; prompt: string; tool: ToolKind; icon: typeof Bot; accent: string }> = [
+    {
+      title: '生成 PPT',
+      desc: '从主题到大纲与页面',
+      prompt: '帮我做一份 8 页左右的产品发布会 PPT，风格专业简洁，包含背景、亮点、方案、计划和总结。',
+      tool: 'ppt',
+      icon: LayoutDashboard,
+      accent: 'from-blue-500 to-indigo-500',
+    },
+    {
+      title: '分析 Excel',
+      desc: '整理数据、洞察和图表',
+      prompt: '我会上传一份 Excel，请帮我分析关键指标、异常数据，并生成一份可汇报的结论摘要。',
+      tool: 'excel',
+      icon: Sheet,
+      accent: 'from-amber-500 to-orange-500',
+    },
+    {
+      title: '写 Word 文档',
+      desc: '提纲、正文和格式化',
+      prompt: '帮我写一份项目复盘文档，包含目标、过程、结果、问题、改进计划，语气正式但不死板。',
+      tool: 'doc',
+      icon: FileEdit,
+      accent: 'from-emerald-500 to-teal-500',
+    },
+    {
+      title: '画流程图',
+      desc: '流程、架构与关系图',
+      prompt: '帮我画一个客户从提交需求到交付验收的业务流程图，节点清晰，适合放进汇报材料。',
+      tool: 'drawio',
+      icon: PenTool,
+      accent: 'from-violet-500 to-fuchsia-500',
+    },
+  ]
 
   useEffect(() => {
     setExpandedTurnKeys((current) => {
@@ -468,21 +502,50 @@ export function ChatPanel({
       <div className="relative z-10 flex-1 overflow-y-auto px-5 pb-8 pt-10">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
           {messages.length === 0 && (
-            <div className="flex min-h-[48vh] flex-col items-center justify-center text-center">
+            <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
               <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-3xl border border-black/5 bg-white/80 shadow-[0_18px_50px_rgba(24,24,27,0.10)] backdrop-blur">
                 <Sparkles className="h-7 w-7 text-surface-900" />
               </div>
               <h1 className="text-3xl font-semibold tracking-tight text-surface-950">今天要做什么？</h1>
               <p className="mt-3 max-w-xl text-sm leading-6 text-surface-500">
-                像 Codex 一样把过程透明化：先分析需求，再决策工具，最后绘制或生成产物。你可以先描述目标，也可以直接选工具开工。
+                WaLiOffice 在线智能办公 AI：先分析需求，再决策工具，最后绘制或生成产物。你可以先描述目标，也可以直接选工具开工。
               </p>
-              <div className="mt-7 grid w-full max-w-2xl grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="mt-7 grid w-full max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
+                {starterCards.map((card) => {
+                  const Icon = card.icon
+                  return (
+                    <button
+                      key={card.title}
+                      onClick={() => {
+                        onToolChange(card.tool)
+                        onInputChange(card.prompt)
+                        window.setTimeout(() => textareaRef.current?.focus(), 0)
+                      }}
+                      disabled={isStreaming}
+                      className="group rounded-3xl border border-black/5 bg-white/68 p-4 text-left shadow-sm backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_18px_38px_rgba(24,24,27,0.08)] disabled:opacity-50"
+                    >
+                      <span className="flex items-start gap-3">
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${card.accent} text-white shadow-sm`}>
+                          <Icon className="h-5 w-5" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-black text-surface-900">{card.title}</span>
+                          <span className="mt-1 block text-xs leading-5 text-surface-500">{card.desc}</span>
+                          <span className="mt-3 line-clamp-2 block text-[11px] leading-5 text-surface-400 group-hover:text-surface-600">{card.prompt}</span>
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="mt-3 flex w-full max-w-3xl flex-wrap justify-center gap-2">
                 {tool.examples.slice(0, 3).map((suggestion) => (
                   <button
                     key={suggestion}
+                    type="button"
                     onClick={() => onInputChange(suggestion)}
                     disabled={isStreaming}
-                    className="rounded-2xl border border-black/5 bg-white/65 px-4 py-3 text-left text-xs leading-relaxed text-surface-600 shadow-sm backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md disabled:opacity-50"
+                    className="rounded-full border border-black/5 bg-white/55 px-3 py-1.5 text-[11px] font-medium text-surface-500 transition hover:bg-white hover:text-surface-900 disabled:opacity-50"
                   >
                     {suggestion}
                   </button>
@@ -596,57 +659,66 @@ export function ChatPanel({
       <div className="relative z-20 shrink-0 bg-[#f6f4ef]/88 px-5 pb-4 pt-3 backdrop-blur-xl">
         <div className="mx-auto w-full max-w-3xl">
           {artifacts.length > 0 && (
-            <div className="mb-3 overflow-hidden rounded-[1.55rem] border border-white/70 bg-white/86 shadow-[0_16px_46px_rgba(24,24,27,0.10)] backdrop-blur-2xl ring-1 ring-black/[0.04]">
+            <div className="mb-3 overflow-hidden rounded-[1.75rem] border border-white/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(249,247,240,0.88))] shadow-[0_18px_54px_rgba(24,24,27,0.12)] backdrop-blur-2xl ring-1 ring-black/[0.035]">
               <button
                 type="button"
                 onClick={() => setArtifactSummaryExpanded((expanded) => !expanded)}
-                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-white/70"
+                className="relative flex w-full items-center justify-between gap-3 overflow-hidden px-4 py-3.5 text-left transition-colors hover:bg-white/55"
                 aria-expanded={artifactSummaryExpanded}
               >
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-surface-950 text-white shadow-[0_10px_24px_rgba(24,24,27,0.18)]">
-                    <Files className="h-4 w-4" />
+                <span className="pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-[radial-gradient(circle_at_20%_30%,rgba(59,130,246,0.10),transparent_46%)]" />
+                <div className="relative flex min-w-0 items-center gap-3">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[1.2rem] bg-surface-950 text-white shadow-[0_12px_28px_rgba(24,24,27,0.22)] ring-1 ring-white/20">
+                    <Files className="h-5 w-5" />
                   </span>
                   <span className="min-w-0">
-                    <span className="block text-sm font-semibold text-surface-950">产物汇总</span>
-                    <span className="block truncate text-xs text-surface-500">生成结果集中在这里，可随时展开回看、预览和下载。</span>
+                    <span className="flex items-center gap-2 text-sm font-bold text-surface-950">
+                      产物汇总
+                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-100">实时同步</span>
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-surface-500">生成结果集中在这里，可随时展开回看、预览和下载。</span>
                   </span>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="rounded-full bg-surface-100 px-2.5 py-1 text-[11px] font-semibold text-surface-600">
+                <div className="relative flex shrink-0 items-center gap-2">
+                  <span className="rounded-full bg-white/82 px-3 py-1.5 text-[11px] font-bold text-surface-700 shadow-sm ring-1 ring-black/[0.05]">
                     {artifacts.length} 个 · {artifactTurnGroups.length} 轮
                   </span>
-                  <ChevronDown className={`h-4 w-4 text-surface-400 transition-transform ${artifactSummaryExpanded ? 'rotate-180' : ''}`} />
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/75 text-surface-400 shadow-sm ring-1 ring-black/[0.05]">
+                    <ChevronDown className={`h-4 w-4 transition-transform ${artifactSummaryExpanded ? 'rotate-180' : ''}`} />
+                  </span>
                 </div>
               </button>
 
               {artifactSummaryExpanded && (
-                <div className="max-h-[260px] space-y-2 overflow-y-auto border-t border-black/[0.04] p-3 [scrollbar-gutter:stable]">
+                <div className="max-h-[292px] space-y-2.5 overflow-y-auto border-t border-white/70 bg-white/30 p-3 [scrollbar-gutter:stable]">
                   {artifactTurnGroups.map((group) => {
                     const expanded = expandedTurnKeys.includes(group.key)
                     return (
-                      <div key={group.key} className="overflow-hidden rounded-[1.2rem] border border-black/[0.05] bg-[#fcfbf8]/95">
+                      <div key={group.key} className="overflow-hidden rounded-[1.35rem] border border-white/75 bg-[#fffdfa]/86 shadow-[0_10px_28px_rgba(24,24,27,0.06)] ring-1 ring-black/[0.025]">
                         <button
                           type="button"
                           onClick={() => setExpandedTurnKeys((current) => current.includes(group.key) ? current.filter((key) => key !== group.key) : [...current, group.key])}
-                          className="flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-white/70"
+                          className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-white/75"
                         >
                           <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="rounded-full bg-surface-950 px-2.5 py-1 text-[11px] font-semibold text-white">{group.title}</span>
-                              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-surface-500 ring-1 ring-black/[0.05]">{group.timeLabel}</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-bold text-primary-700 ring-1 ring-primary-100">{group.title}</span>
+                              <span className="rounded-full bg-surface-50 px-2.5 py-1 text-[11px] font-medium text-surface-500 ring-1 ring-black/[0.05]">{group.timeLabel}</span>
+                              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-100">已生成</span>
                             </div>
-                            <div className="mt-1 truncate text-xs text-surface-500">这一轮生成 {group.artifacts.length} 个产物。</div>
+                            <div className="mt-1.5 truncate text-xs text-surface-500">这一轮沉淀 {group.artifacts.length} 个可预览、可下载的产物。</div>
                           </div>
                           <div className="flex items-center gap-2 text-surface-400">
-                            <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-surface-500 ring-1 ring-black/[0.05]">{group.artifacts.length} 个</span>
-                            <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                            <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-surface-600 shadow-sm ring-1 ring-black/[0.05]">{group.artifacts.length} 个</span>
+                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-50 ring-1 ring-black/[0.04]">
+                              <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                            </span>
                           </div>
                         </button>
 
                         {expanded && (
-                          <div className="border-t border-black/[0.04] px-3.5 py-2.5">
-                            <div className="flex gap-2 overflow-x-auto pb-1">
+                          <div className="border-t border-black/[0.04] bg-white/42 px-3.5 py-3">
+                            <div className="flex gap-2 overflow-x-auto pb-1.5">
                               {group.artifacts.map((artifact) => {
                                 const meta = artifactMeta[artifact.kind] || artifactMeta.mixed
                                 const ArtifactIcon = meta.icon
@@ -656,17 +728,20 @@ export function ChatPanel({
                                     key={artifact.id}
                                     type="button"
                                     onClick={() => onOpenArtifact(artifact.id)}
-                                    className={`group inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs transition-all ${
+                                    className={`group inline-flex min-w-[220px] shrink-0 items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-xs transition-all ${
                                       isActive
-                                        ? 'border-surface-900 bg-surface-950 text-white shadow-sm'
-                                        : 'border-black/[0.07] bg-white text-surface-600 hover:bg-white hover:text-surface-900'
+                                        ? 'border-surface-900 bg-surface-950 text-white shadow-[0_12px_26px_rgba(24,24,27,0.20)]'
+                                        : 'border-black/[0.06] bg-white/92 text-surface-600 shadow-sm hover:-translate-y-0.5 hover:bg-white hover:text-surface-900 hover:shadow-md'
                                     }`}
                                   >
-                                    <span className={`flex h-7 w-7 items-center justify-center rounded-full ${isActive ? 'bg-white/12 text-white' : 'bg-surface-50 text-surface-700 ring-1 ring-black/[0.05]'}`}>
-                                      <ArtifactIcon className="h-3.5 w-3.5" />
+                                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${isActive ? 'bg-white/12 text-white' : 'bg-surface-50 text-surface-700 ring-1 ring-black/[0.05]'}`}>
+                                      <ArtifactIcon className="h-4 w-4" />
                                     </span>
-                                    <span className="max-w-[180px] truncate text-left">{artifact.title || meta.label}</span>
-                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isActive ? 'bg-white/12 text-white/85' : 'bg-surface-100 text-surface-500'}`}>{artifactExtension(artifact)}</span>
+                                    <span className="min-w-0 flex-1 text-left">
+                                      <span className="block truncate font-semibold">{artifact.title || meta.label}</span>
+                                      <span className={`mt-0.5 block text-[10px] ${isActive ? 'text-white/60' : 'text-surface-400'}`}>{meta.label}</span>
+                                    </span>
+                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${isActive ? 'bg-white/12 text-white/85' : 'bg-surface-100 text-surface-500'}`}>{artifactExtension(artifact)}</span>
                                   </button>
                                 )
                               })}
@@ -678,24 +753,24 @@ export function ChatPanel({
                   })}
 
                   {selectedArtifact && (
-                    <div className="rounded-[1.2rem] border border-black/[0.05] bg-white/76 p-3">
+                    <div className="rounded-[1.35rem] border border-white/75 bg-white/88 p-3.5 shadow-[0_12px_30px_rgba(24,24,27,0.07)] ring-1 ring-black/[0.025]">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            {selectedArtifactTurn && <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700">{selectedArtifactTurn.title}</span>}
-                            <span className="rounded-full bg-surface-100 px-2.5 py-1 text-[11px] font-semibold text-surface-600">{(artifactMeta[selectedArtifact.kind] || artifactMeta.mixed).label}</span>
-                            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">{selectedArtifact.status === 'ready' ? '已生成' : selectedArtifact.status}</span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {selectedArtifactTurn && <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-bold text-primary-700 ring-1 ring-primary-100">{selectedArtifactTurn.title}</span>}
+                            <span className="rounded-full bg-surface-100 px-2.5 py-1 text-[11px] font-semibold text-surface-600 ring-1 ring-black/[0.04]">{(artifactMeta[selectedArtifact.kind] || artifactMeta.mixed).label}</span>
+                            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-100">{selectedArtifact.status === 'ready' ? '已生成' : selectedArtifact.status}</span>
                           </div>
-                          <div className="mt-2 truncate text-sm font-semibold text-surface-950">{selectedArtifact.title || (artifactMeta[selectedArtifact.kind] || artifactMeta.mixed).label}</div>
-                          <div className="mt-0.5 line-clamp-1 text-xs text-surface-500">{describeArtifact(selectedArtifact)}</div>
+                          <div className="mt-2 truncate text-[15px] font-bold text-surface-950">{selectedArtifact.title || (artifactMeta[selectedArtifact.kind] || artifactMeta.mixed).label}</div>
+                          <div className="mt-1 line-clamp-1 text-xs text-surface-500">{describeArtifact(selectedArtifact)}</div>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
-                          <button type="button" onClick={() => onOpenArtifact(selectedArtifact.id)} className="inline-flex items-center gap-1.5 rounded-full bg-surface-950 px-3 py-2 text-xs font-semibold text-white hover:bg-surface-800">
+                          <button type="button" onClick={() => onOpenArtifact(selectedArtifact.id)} className="inline-flex items-center gap-1.5 rounded-full bg-surface-950 px-3.5 py-2.5 text-xs font-bold text-white shadow-[0_10px_22px_rgba(24,24,27,0.20)] hover:bg-surface-800">
                             <Eye className="h-3.5 w-3.5" />
                             预览
                           </button>
                           {(selectedArtifact.kind === 'ppt' || selectedArtifact.kind === 'document' || selectedArtifact.kind === 'markdown' || selectedArtifact.kind === 'sheet' || selectedArtifact.kind === 'drawio' || selectedArtifact.kind === 'image' || selectedArtifact.kind === 'video') && (
-                            <button type="button" onClick={() => onExportArtifact(selectedArtifact)} className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-surface-700 hover:bg-surface-50">
+                            <button type="button" onClick={() => onExportArtifact(selectedArtifact)} className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white px-3.5 py-2.5 text-xs font-bold text-surface-700 shadow-sm hover:bg-surface-50">
                               <Download className="h-3.5 w-3.5" />
                               {(artifactMeta[selectedArtifact.kind] || artifactMeta.mixed).exportLabel || '下载'}
                             </button>

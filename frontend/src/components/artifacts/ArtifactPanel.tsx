@@ -430,13 +430,31 @@ function ImageArtifact({ artifact }: { artifact: Artifact }) {
   const prompt = artifact.content?.prompt || '等待图像 Agent 生成提示词或图片。'
   const images: string[] = artifact.content?.images || []
   const variants: Array<{ style?: string; prompt?: string; url?: string }> = artifact.content?.variants || artifact.content?.data?.prompts || []
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!previewImage) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPreviewImage(null)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [previewImage])
+
   return (
     <div className="w-full max-w-3xl space-y-4">
       {images.length > 0 ? (
         <div className="grid grid-cols-2 gap-4">
           {images.map((src, index) => (
             <div key={src} className="space-y-2">
-              <img src={src} className="aspect-video rounded-3xl border border-surface-200 object-cover" />
+              <button
+                type="button"
+                onClick={() => setPreviewImage(src)}
+                className="block w-full cursor-zoom-in rounded-3xl text-left focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                aria-label={`放大查看图片 ${index + 1}`}
+              >
+                <img src={src} className="aspect-video w-full rounded-3xl border border-surface-200 object-cover" />
+              </button>
               <button
                 type="button"
                 onClick={() => downloadFromUrl(src, `${artifact.title || 'image'}-${index + 1}.png`)}
@@ -450,6 +468,28 @@ function ImageArtifact({ artifact }: { artifact: Artifact }) {
         </div>
       ) : (
         <div className="aspect-video rounded-3xl border border-surface-200 bg-gradient-to-br from-violet-100 via-white to-sky-100 flex items-center justify-center text-surface-400"><Image className="h-10 w-10" /></div>
+      )}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          onClick={() => setPreviewImage(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewImage(null)}
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-2xl leading-none text-surface-900 shadow-lg hover:bg-white"
+            aria-label="关闭图片预览"
+          >
+            ×
+          </button>
+          <img
+            src={previewImage}
+            className="max-h-[90vh] max-w-[92vw] rounded-2xl object-contain shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
       )}
       {artifact.content?.description && (
         <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">

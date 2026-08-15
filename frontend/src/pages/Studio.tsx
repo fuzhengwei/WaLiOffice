@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import type React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth-store'
 import { usePPTStore } from '@/stores/ppt-store'
@@ -8,8 +9,16 @@ import { SlidePreview } from '@/components/preview/SlidePreview'
 import { ConversationSidebar } from '@/components/history/ConversationSidebar'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
-import { Play, X, PanelRightClose, PanelRight } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Info, Play, X, PanelRightClose, PanelRight } from 'lucide-react'
+import type { AppSettings, Artifact, ChatAttachment, ConversationRecord, LLMProfile, PersistedSession, ProjectMeta, ToolKind } from '@/types'
 const LOGO_URL = '/logo.png'
+
+type ToastTone = 'success' | 'error' | 'info'
+
+interface ToastState {
+  message: string
+  tone: ToastTone
+}
 
 function buildRestoredMessages(session: PersistedSession) {
   const restored = (session.messages || [])
@@ -171,6 +180,7 @@ export default function Studio() {
   const [processLogs, setProcessLogs] = useState<string[]>([])
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [sidebarWidth, setSidebarWidth] = useState(getStoredSidebarWidth)
+  const [toast, setToast] = useState<ToastState | null>(null)
 
   // 设置 & 模型
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -181,7 +191,24 @@ export default function Studio() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const autoExportedArtifactIdsRef = useRef<Set<string>>(new Set())
+  const autoSavedArtifactIdsRef = useRef<Set<string>>(new Set())
   const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const toastTimerRef = useRef<number | null>(null)
+
+  const showToast = (message: string, tone: ToastTone = 'info') => {
+    setToast({ message, tone })
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null)
+      toastTimerRef.current = null
+    }, 3200)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -277,10 +304,11 @@ export default function Studio() {
       setShowArtifactPanel(false)
       setFollowLatestSlide(true)
       setPptProgress(null)
+      autoSavedArtifactIdsRef.current.clear()
       refreshProjects()
     } catch (err) {
       console.error('Create project error:', err)
-      alert('创建项目失败')
+      showToast('创建项目失败', 'error')
     }
   }
 
@@ -300,7 +328,7 @@ export default function Studio() {
       refreshProjects()
     } catch (err) {
       console.error('Delete project error:', err)
-      alert('删除项目失败')
+      showToast('删除项目失败', 'error')
     }
   }
 
@@ -310,6 +338,7 @@ export default function Studio() {
     refreshConversations()
     reset()
     autoExportedArtifactIdsRef.current.clear()
+    autoSavedArtifactIdsRef.current.clear()
     setActiveTool('general')
     setShowArtifactPanel(false)
     setFollowLatestSlide(true)
@@ -369,7 +398,7 @@ export default function Studio() {
     } catch (err) {
       console.error('Select conversation error:', err)
       const errMsg = err instanceof Error ? err.message : '未知错误'
-      alert(`恢复历史会话失败：${errMsg}`)
+      showToast(`恢复历史会话失败：${errMsg}`, 'error')
     }
   }
 
@@ -379,7 +408,7 @@ export default function Studio() {
       refreshConversations()
     } catch (err) {
       console.error('Rename conversation error:', err)
-      alert('修改对话标题失败')
+      showToast('修改对话标题失败', 'error')
     }
   }
 
@@ -394,7 +423,7 @@ export default function Studio() {
       refreshProjects()
     } catch (err) {
       console.error('Delete conversation error:', err)
-      alert('删除对话失败')
+      showToast('删除对话失败', 'error')
     }
   }
 
@@ -426,7 +455,7 @@ export default function Studio() {
       refreshProjects()
     } catch (err) {
       console.error('Move conversation error:', err)
-      alert('移动对话失败')
+      showToast('移动对话失败', 'error')
       refreshConversations()
       refreshProjects()
     }
@@ -446,7 +475,7 @@ export default function Studio() {
       setActiveView('chat')
     } catch (err: any) {
       console.error('Save settings error:', err)
-      alert(err.response?.data?.detail || err.message || '设置保存失败')
+      showToast(err.response?.data?.detail || err.message || '设置保存失败', 'error')
       throw err
     }
   }
@@ -616,18 +645,27 @@ export default function Studio() {
       const nextItems = (await Promise.all(files.map(buildAttachmentFromFile))).filter(Boolean) as ChatAttachment[]
       const unsupported = files.length - nextItems.length
       if (unsupported > 0) {
-        alert('目前支持上传 md、txt、csv、json、docx、xlsx、pptx、pdf 和图片文件。')
+        showToast('目前支持上传 md、txt、csv、json、docx、xlsx、pptx、pdf 和图片文件。', 'error')
       }
       if (nextItems.length === 0) return
+
+      await Promise.allSettled(
+        nextItems.map((item) => {
+          const source = files.find((file) => file.name === item.name && file.size === item.size)
+          if (!source) return Promise.resolve()
+          return fileApi.upload(source, undefined, '聊天上传附件')
+        })
+      )
 
       setAttachments((current) => {
         const merged = [...current, ...nextItems]
         const deduped = merged.filter((item, index, arr) => arr.findIndex((target) => target.name === item.name && target.size === item.size) === index)
         return deduped.slice(0, 6)
       })
+      showToast(`已添加 ${nextItems.length} 个附件，并保存到我的文件`, 'success')
     } catch (err) {
       console.error('Read attachment error:', err)
-      alert('读取附件失败，请检查文件编码或重新选择文件。')
+      showToast('读取附件失败，请检查文件编码或重新选择文件。', 'error')
     }
   }
 
@@ -913,10 +951,12 @@ export default function Studio() {
               break
             }
 
-            case 'done':
+            case 'done': {
               playConversationDoneSound()
+              const doneArtifacts = Array.isArray(data.new_artifacts) ? data.new_artifacts : []
               setStreamPhase('done')
-              setStreamStatus(Array.isArray(data.artifacts) && data.artifacts.length > 0 ? '生成完成' : '回复完成')
+              setStreamStatus(doneArtifacts.length > 0 ? '生成完成' : '回复完成')
+              if (doneArtifacts.length > 0) saveGeneratedArtifactsToFiles(doneArtifacts)
               if (data.session_id) setSessionId(data.session_id)
               if (Array.isArray(data.artifacts)) {
                 data.artifacts.forEach((artifact: Artifact) => upsertArtifact(artifact))
@@ -924,7 +964,7 @@ export default function Studio() {
                   setShowArtifactPanel(true)
                 }
               }
-              const pptArtifact = (data.artifacts || []).find((item: Artifact) => item.kind === 'ppt')
+              const pptArtifact = doneArtifacts.find((item: Artifact) => item.kind === 'ppt')
               if (pptArtifact) {
                 applyPptArtifact(pptArtifact)
                 const total = pptArtifact.content?.total_slides || pptArtifact.content?.slide_count || pptArtifact.content?.slides?.length || 0
@@ -938,6 +978,7 @@ export default function Studio() {
                 })
               }
               break
+            }
 
             case 'error':
               console.error('SSE error:', data)
@@ -1004,16 +1045,17 @@ export default function Studio() {
       const blob = res.data as Blob
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
-      const safeTitle = (projectTitle || 'presentation').replace(/[\\/:*?"<>|]/g, '_')
+      const filename = safeFilename(projectTitle, 'presentation', '.pptx')
+      await saveGeneratedBlob(blob, filename)
       link.href = url
-      link.download = `${safeTitle}.pptx`
+      link.download = filename
       document.body.appendChild(link)
       link.click()
       link.remove()
       window.URL.revokeObjectURL(url)
     } catch (err) {
       console.error('Export error:', err)
-      alert('导出失败，请重试')
+      showToast('导出失败，请重试', 'error')
     }
   }
 
@@ -1028,22 +1070,107 @@ export default function Studio() {
     window.URL.revokeObjectURL(url)
   }
 
+  const safeFilename = (title: string | undefined, fallback: string, extension: string) => {
+    const base = (title || fallback).replace(/[\\/:*?"<>|]/g, '_').trim() || fallback
+    return base.toLowerCase().endsWith(extension.toLowerCase()) ? base : `${base}${extension}`
+  }
+
+  const saveGeneratedBlob = async (blob: Blob, filename: string, artifact?: Artifact) => {
+    try {
+      await fileApi.saveBlob(
+        blob,
+        filename,
+        artifact ? `智能助手生成：${artifact.title || filename}` : '智能助手生成'
+      )
+      if (artifact?.id) autoSavedArtifactIdsRef.current.add(artifact.id)
+    } catch (err) {
+      console.warn('Save generated file failed:', err)
+    }
+  }
+
+  const blobFromUrl = async (url: string) => {
+    if (url.startsWith('data:')) {
+      const res = await fetch(url)
+      return res.blob()
+    }
+    const res = await fetch(url, { mode: 'cors' })
+    if (!res.ok) throw new Error(`下载资源失败：${res.status}`)
+    return res.blob()
+  }
+
+  const saveGeneratedArtifactToFiles = async (artifact: Artifact) => {
+    if (autoSavedArtifactIdsRef.current.has(artifact.id)) return
+    if (artifact.kind === 'document') {
+      const res = await docApi.exportDocx(artifact)
+      await saveGeneratedBlob(res.data as Blob, safeFilename(artifact.title, 'document', '.docx'), artifact)
+      return
+    }
+    if (artifact.kind === 'sheet') {
+      const res = await excelApi.exportXlsx(artifact)
+      await saveGeneratedBlob(res.data as Blob, safeFilename(artifact.title, 'spreadsheet', '.xlsx'), artifact)
+      return
+    }
+    if (artifact.kind === 'markdown') {
+      const markdown = artifact.content?.markdown || ''
+      if (!markdown.trim()) return
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+      await saveGeneratedBlob(blob, safeFilename(artifact.title, 'document', '.md'), artifact)
+      return
+    }
+    if (artifact.kind === 'drawio') {
+      const xml = artifact.content?.xml || ''
+      if (!xml.trim()) return
+      const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' })
+      await saveGeneratedBlob(blob, safeFilename(artifact.title, 'diagram', '.drawio'), artifact)
+      return
+    }
+    if (artifact.kind === 'ppt') {
+      const projectId = artifact.content?.project_id || project?.id
+      if (!projectId) return
+      const res = await pptApi.exportPptx(projectId)
+      await saveGeneratedBlob(res.data as Blob, safeFilename(artifact.title || project?.title, 'presentation', '.pptx'), artifact)
+      return
+    }
+    if (artifact.kind === 'image') {
+      const imageUrl = artifact.content?.images?.[0]
+      if (!imageUrl) return
+      const blob = await blobFromUrl(imageUrl)
+      await saveGeneratedBlob(blob, safeFilename(artifact.title, 'image', '.png'), artifact)
+      return
+    }
+    if (artifact.kind === 'video') {
+      const videoUrl = artifact.content?.video_url
+      if (!videoUrl) return
+      const blob = await blobFromUrl(videoUrl)
+      await saveGeneratedBlob(blob, safeFilename(artifact.title, 'video', '.mp4'), artifact)
+    }
+  }
+
+  const saveGeneratedArtifactsToFiles = (items: Artifact[]) => {
+    items.forEach((artifact) => {
+      saveGeneratedArtifactToFiles(artifact).catch((err) => {
+        console.warn('Save generated artifact to files failed:', err)
+      })
+    })
+  }
+
   const handleExportExcel = async (artifact: Artifact) => {
     try {
       const res = await excelApi.exportXlsx(artifact)
       const blob = res.data as Blob
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
-      const safeTitle = (artifact.title || 'spreadsheet').replace(/[\\/:*?"<>|]/g, '_')
+      const filename = safeFilename(artifact.title, 'spreadsheet', '.xlsx')
+      if (!autoSavedArtifactIdsRef.current.has(artifact.id)) await saveGeneratedBlob(blob, filename, artifact)
       link.href = url
-      link.download = `${safeTitle}.xlsx`
+      link.download = filename
       document.body.appendChild(link)
       link.click()
       link.remove()
       window.URL.revokeObjectURL(url)
     } catch (err) {
       console.error('Excel export error:', err)
-      alert('Excel 导出失败，请重试')
+      showToast('Excel 导出失败，请重试', 'error')
     }
   }
 
@@ -1053,16 +1180,17 @@ export default function Studio() {
       const blob = res.data as Blob
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
-      const safeTitle = (artifact.title || 'document').replace(/[\\/:*?"<>|]/g, '_')
+      const filename = safeFilename(artifact.title, 'document', '.docx')
+      if (!autoSavedArtifactIdsRef.current.has(artifact.id)) await saveGeneratedBlob(blob, filename, artifact)
       link.href = url
-      link.download = `${safeTitle}.docx`
+      link.download = filename
       document.body.appendChild(link)
       link.click()
       link.remove()
       window.URL.revokeObjectURL(url)
     } catch (err) {
       console.error('DOCX export error:', err)
-      alert('Word 导出失败，请重试')
+      showToast('Word 导出失败，请重试', 'error')
     }
   }
 
@@ -1070,15 +1198,16 @@ export default function Studio() {
     try {
       const markdown = artifact.content?.markdown || ''
       if (!markdown.trim()) {
-        alert('当前 Markdown 文档暂无可下载内容')
+        showToast('当前 Markdown 文档暂无可下载内容', 'info')
         return
       }
-      const safeTitle = (artifact.title || 'document').replace(/[\\/:*?"<>|]/g, '_')
       const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
-      downloadBlob(blob, `${safeTitle}.md`)
+      const filename = safeFilename(artifact.title, 'document', '.md')
+      if (!autoSavedArtifactIdsRef.current.has(artifact.id)) void saveGeneratedBlob(blob, filename, artifact)
+      downloadBlob(blob, filename)
     } catch (err) {
       console.error('Markdown export error:', err)
-      alert('Markdown 下载失败，请重试')
+      showToast('Markdown 下载失败，请重试', 'error')
     }
   }
 
@@ -1092,15 +1221,16 @@ export default function Studio() {
     try {
       const xml = artifact.content?.xml
       if (!xml) {
-        alert('当前 draw.io 文件暂无可下载内容')
+        showToast('当前 draw.io 文件暂无可下载内容', 'info')
         return
       }
-      const safeTitle = (artifact.title || 'diagram').replace(/[\\/:*?"<>|]/g, '_')
       const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' })
-      downloadBlob(blob, `${safeTitle}.drawio`)
+      const filename = safeFilename(artifact.title, 'diagram', '.drawio')
+      if (!autoSavedArtifactIdsRef.current.has(artifact.id)) await saveGeneratedBlob(blob, filename, artifact)
+      downloadBlob(blob, filename)
     } catch (err) {
       console.error('Draw.io export error:', err)
-      alert('draw.io 下载失败，请重试')
+      showToast('draw.io 下载失败，请重试', 'error')
     }
   }
 
@@ -1137,13 +1267,18 @@ export default function Studio() {
     if (artifact.kind === 'image') {
       const imageUrl = artifact.content?.images?.[0]
       if (!imageUrl) {
-        alert('当前图片结果暂无可下载内容')
+        showToast('当前图片结果暂无可下载内容', 'info')
         return
       }
-      const safeTitle = (artifact.title || 'image').replace(/[\\/:*?"<>|]/g, '_')
+      const filename = safeFilename(artifact.title, 'image', '.png')
+      if (!autoSavedArtifactIdsRef.current.has(artifact.id)) {
+        blobFromUrl(imageUrl)
+          .then((blob) => saveGeneratedBlob(blob, filename, artifact))
+          .catch((err) => console.warn('Save image artifact failed:', err))
+      }
       const link = document.createElement('a')
       link.href = imageUrl
-      link.download = `${safeTitle}.png`
+      link.download = filename
       link.target = '_blank'
       document.body.appendChild(link)
       link.click()
@@ -1153,13 +1288,18 @@ export default function Studio() {
     if (artifact.kind === 'video') {
       const videoUrl = artifact.content?.video_url
       if (!videoUrl) {
-        alert('当前视频结果暂无可下载内容')
+        showToast('当前视频结果暂无可下载内容', 'info')
         return
       }
-      const safeTitle = (artifact.title || 'video').replace(/[\\/:*?"<>|]/g, '_')
+      const filename = safeFilename(artifact.title, 'video', '.mp4')
+      if (!autoSavedArtifactIdsRef.current.has(artifact.id)) {
+        blobFromUrl(videoUrl)
+          .then((blob) => saveGeneratedBlob(blob, filename, artifact))
+          .catch((err) => console.warn('Save video artifact failed:', err))
+      }
       const link = document.createElement('a')
       link.href = videoUrl
-      link.download = `${safeTitle}.mp4`
+      link.download = filename
       link.target = '_blank'
       document.body.appendChild(link)
       link.click()
@@ -1359,6 +1499,44 @@ export default function Studio() {
           startIndex={currentSlideIndex}
           onClose={() => setShowPresent(false)}
         />
+      )}
+      {toast && (
+        <div className="pointer-events-none fixed right-5 top-5 z-[70] flex justify-end" aria-live="polite">
+          <div className={`pointer-events-auto flex max-w-sm items-start gap-3 rounded-3xl border px-4 py-3 shadow-[0_18px_55px_rgba(24,24,27,0.16)] backdrop-blur-2xl ${
+            toast.tone === 'error'
+              ? 'border-red-200 bg-red-50/95 text-red-700'
+              : toast.tone === 'success'
+                ? 'border-emerald-200 bg-emerald-50/95 text-emerald-700'
+                : 'border-black/[0.06] bg-white/92 text-surface-700'
+          }`}
+          >
+            <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl ${
+              toast.tone === 'error'
+                ? 'bg-red-100 text-red-600'
+                : toast.tone === 'success'
+                  ? 'bg-emerald-100 text-emerald-600'
+                  : 'bg-surface-100 text-surface-600'
+            }`}
+            >
+              {toast.tone === 'error' ? (
+                <AlertCircle className="h-4 w-4" />
+              ) : toast.tone === 'success' ? (
+                <CheckCircle2 className="h-4 w-4" />
+              ) : (
+                <Info className="h-4 w-4" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1 pt-1 text-sm font-semibold leading-5">{toast.message}</div>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="mt-0.5 rounded-full p-1 opacity-60 transition hover:bg-white/70 hover:opacity-100"
+              aria-label="关闭提示"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
       )}
       <input
         ref={attachmentInputRef}

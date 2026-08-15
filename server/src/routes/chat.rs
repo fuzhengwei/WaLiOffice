@@ -491,6 +491,7 @@ async fn chat_stream(
                         "session_id": session_id_for_save,
                         "summary": summary,
                         "artifacts": session_artifacts,
+                        "new_artifacts": collected_artifacts,
                     }).to_string())
                 }
                 AgentEvent::Error { message } => {
