@@ -81,11 +81,11 @@ export function AppLayout() {
               <button
                 type="button"
                 onClick={handleLogout}
-                className="inline-flex h-10 items-center gap-2 rounded-full bg-white/55 px-3 text-sm font-medium text-surface-600 transition hover:bg-white/80 hover:text-surface-950"
+                className="inline-flex h-10 items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-600 transition hover:border-red-300 hover:bg-red-100 hover:text-red-700"
                 title="退出登录"
               >
                 <LogOut className="h-4 w-4" />
-                <span className="hidden md:inline">退出</span>
+                <span>退出登录</span>
               </button>
             </div>
           </div>

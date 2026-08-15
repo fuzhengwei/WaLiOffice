@@ -68,6 +68,33 @@ function buildHistoryProcessLogs(session: PersistedSession) {
 const IMAGE_ATTACHMENT_MAX_EDGE = 1600
 const IMAGE_ATTACHMENT_TARGET_BYTES = 1.8 * 1024 * 1024
 
+function playConversationDoneSound() {
+  try {
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext
+    if (!AudioContextCtor) return
+
+    const audioContext = new AudioContextCtor()
+    const oscillator = audioContext.createOscillator()
+    const gain = audioContext.createGain()
+    const now = audioContext.currentTime
+
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(880, now)
+    oscillator.frequency.exponentialRampToValueAtTime(1320, now + 0.12)
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22)
+
+    oscillator.connect(gain)
+    gain.connect(audioContext.destination)
+    oscillator.start(now)
+    oscillator.stop(now + 0.24)
+    window.setTimeout(() => audioContext.close().catch(() => {}), 320)
+  } catch {
+    // 浏览器可能会因自动播放策略静音，忽略即可。
+  }
+}
+
 function isMediaOnlyModel(model?: string) {
   return /^agnes-(image|video)-/i.test(model || '')
 }
@@ -824,6 +851,7 @@ export default function Studio() {
             }
 
             case 'done':
+              playConversationDoneSound()
               setStreamPhase('done')
               setStreamStatus(Array.isArray(data.artifacts) && data.artifacts.length > 0 ? '生成完成' : '回复完成')
               if (data.session_id) setSessionId(data.session_id)
