@@ -16,6 +16,9 @@ pub struct Config {
     pub llm_provider: String,
     pub llm_tool_timeout_ms: u64,
     pub llm_chat_timeout_ms: u64,
+    pub web_search_provider: String,
+    pub web_search_endpoint: String,
+    pub web_search_timeout_ms: u64,
 
     pub data_dir: String,
     pub projects_dir: String,
@@ -53,6 +56,11 @@ impl Config {
             llm_chat_timeout_ms: env_or("AIPPT_LLM_CHAT_TIMEOUT_MS", "1800000")
                 .parse()
                 .unwrap_or(1_800_000),
+            web_search_provider: env_or("AIPPT_WEB_SEARCH_PROVIDER", "auto"),
+            web_search_endpoint: env_or("AIPPT_WEB_SEARCH_ENDPOINT", "http://127.0.0.1:8080"),
+            web_search_timeout_ms: env_or("AIPPT_WEB_SEARCH_TIMEOUT_MS", "20000")
+                .parse()
+                .unwrap_or(20_000),
 
             data_dir: env_or("AIPPT_DATA_DIR", "data"),
             projects_dir: env_or("AIPPT_PROJECTS_DIR", "data/projects"),

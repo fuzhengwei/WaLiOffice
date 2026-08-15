@@ -4,6 +4,7 @@ pub mod doc_generate;
 pub mod sheet_generate;
 pub mod drawio_generate;
 pub mod image_prompt;
+pub mod web_search;
 
 use std::sync::Arc;
 use super::registry::REGISTRY;
@@ -15,6 +16,7 @@ pub async fn register_all_tools() {
     REGISTRY.register(Arc::new(sheet_generate::SheetGenerateTool)).await;
     REGISTRY.register(Arc::new(drawio_generate::DrawioGenerateTool)).await;
     REGISTRY.register(Arc::new(image_prompt::ImagePromptTool)).await;
+    REGISTRY.register(Arc::new(web_search::WebSearchTool)).await;
 
     let tools = REGISTRY.list().await;
     tracing::info!(
