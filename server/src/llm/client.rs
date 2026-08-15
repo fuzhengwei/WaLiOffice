@@ -51,8 +51,10 @@ impl LlmClient {
                     client.api_key = api_key.clone();
                 }
 
-                let requested_model = preferred_model
-                    .filter(|model| profile.models.iter().any(|item| item == *model));
+                let requested_model = preferred_model.filter(|model| {
+                    profile.models.iter().any(|item| item == *model)
+                        && is_chat_compatible_model(model)
+                });
                 client.model = requested_model
                     .map(|item| item.to_string())
                     .or_else(|| {
@@ -60,15 +62,29 @@ impl LlmClient {
                             .models
                             .iter()
                             .any(|item| item == &settings.active_model)
+                            && is_chat_compatible_model(&settings.active_model)
                         {
                             Some(settings.active_model.clone())
                         } else {
                             None
                         }
                     })
+                    .or_else(|| {
+                        if is_chat_compatible_model(&profile.default_model) {
+                            Some(profile.default_model.clone())
+                        } else {
+                            profile
+                                .models
+                                .iter()
+                                .find(|item| is_chat_compatible_model(item))
+                                .cloned()
+                        }
+                    })
                     .unwrap_or_else(|| profile.default_model.clone());
             }
-        } else if let Some(model) = preferred_model.filter(|item| !item.trim().is_empty()) {
+        } else if let Some(model) =
+            preferred_model.filter(|item| !item.trim().is_empty() && is_chat_compatible_model(item))
+        {
             client.model = model.to_string();
         }
 
@@ -94,6 +110,7 @@ impl LlmClient {
         tools: Option<&[FunctionDef]>,
         user_attachments: Option<&[ChatAttachment]>,
     ) -> Result<ChatCompletionResponse> {
+        let has_image_attachments = has_image_attachments(user_attachments);
         let req = ChatCompletionRequest {
             model: self.model.clone(),
             messages: build_request_messages(messages, user_attachments),
@@ -103,46 +120,68 @@ impl LlmClient {
             stream: Some(false),
         };
 
-        let has_image_attachments = user_attachments
-            .map(|items| {
-                items.iter().any(|item| {
-                    item.kind == "image"
-                        && item
-                            .data_url
-                            .as_deref()
-                            .map(|value| !value.trim().is_empty())
-                            .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false);
-
         match self.send_chat_request(&req).await {
             Ok(result) => Ok(result),
-            Err(err) if has_image_attachments => {
-                tracing::warn!("vision request failed, retrying text-only chat: {err}");
-                let mut fallback_messages = messages.to_vec();
-                fallback_messages.push(ChatMessage {
-                    role: "system".to_string(),
-                    content: "当前模型或接口暂不支持图片视觉输入。不要假装已经看到了图片内容；请明确告知用户当前限制，并引导其补充图片中的文字、关键区域截图或切换到支持视觉的模型后重试。".to_string(),
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-                let fallback_req = ChatCompletionRequest {
+            Err(err) if has_image_attachments && tools.is_some() => {
+                tracing::warn!(
+                    "vision request with tools failed, retrying vision chat without tools: {err}"
+                );
+                let vision_only_req = ChatCompletionRequest {
                     model: self.model.clone(),
-                    messages: build_request_messages(&fallback_messages, None),
-                    tools: tools.map(|t| t.to_vec()),
+                    messages: build_request_messages(messages, user_attachments),
+                    tools: None,
                     tool_choice: None,
                     temperature: Some(0.7),
                     stream: Some(false),
                 };
-                self.send_chat_request(&fallback_req).await
+
+                match self.send_chat_request(&vision_only_req).await {
+                    Ok(result) => Ok(result),
+                    Err(vision_err) => {
+                        tracing::warn!(
+                            "vision-only retry failed, retrying text-only chat: {vision_err}"
+                        );
+                        self.retry_text_only_after_vision_failure(messages, tools)
+                            .await
+                    }
+                }
+            }
+            Err(err) if has_image_attachments => {
+                tracing::warn!("vision request failed, retrying text-only chat: {err}");
+                self.retry_text_only_after_vision_failure(messages, tools)
+                    .await
             }
             Err(err) => Err(err),
         }
     }
 
-    async fn send_chat_request(&self, req: &ChatCompletionRequest) -> Result<ChatCompletionResponse> {
+    async fn retry_text_only_after_vision_failure(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[FunctionDef]>,
+    ) -> Result<ChatCompletionResponse> {
+        let mut fallback_messages = messages.to_vec();
+        fallback_messages.push(ChatMessage {
+            role: "system".to_string(),
+            content: "当前模型或接口暂未成功处理本次图片视觉输入。不要假装已经看到了图片内容；请明确告知用户当前限制，并优先依据 OCR 文本、图片中的关键区域说明或用户补充描述继续回答。".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+        let fallback_req = ChatCompletionRequest {
+            model: self.model.clone(),
+            messages: build_request_messages(&fallback_messages, None),
+            tools: tools.map(|t| t.to_vec()),
+            tool_choice: None,
+            temperature: Some(0.7),
+            stream: Some(false),
+        };
+        self.send_chat_request(&fallback_req).await
+    }
 
+    async fn send_chat_request(
+        &self,
+        req: &ChatCompletionRequest,
+    ) -> Result<ChatCompletionResponse> {
         let url = format!("{}/chat/completions", self.base_url);
         debug!("LLM chat request to {url}");
 
@@ -204,7 +243,26 @@ fn build_request_messages(
     user_attachments: Option<&[ChatAttachment]>,
 ) -> Vec<RequestMessage> {
     let latest_user_index = user_attachments
-        .filter(|items| {
+        .filter(|items| has_image_attachments(Some(items)))
+        .and_then(|_| messages.iter().rposition(|msg| msg.role == "user"));
+
+    messages
+        .iter()
+        .enumerate()
+        .map(
+            |(index, msg)| match (Some(index) == latest_user_index, user_attachments) {
+                (true, Some(attachments)) => {
+                    RequestMessage::from_multimodal_user_message(msg, attachments)
+                }
+                _ => RequestMessage::from_chat_message(msg),
+            },
+        )
+        .collect()
+}
+
+fn has_image_attachments(user_attachments: Option<&[ChatAttachment]>) -> bool {
+    user_attachments
+        .map(|items| {
             items.iter().any(|item| {
                 item.kind == "image"
                     && item
@@ -214,16 +272,10 @@ fn build_request_messages(
                         .unwrap_or(false)
             })
         })
-        .and_then(|_| messages.iter().rposition(|msg| msg.role == "user"));
+        .unwrap_or(false)
+}
 
-    messages
-        .iter()
-        .enumerate()
-        .map(|(index, msg)| match (Some(index) == latest_user_index, user_attachments) {
-            (true, Some(attachments)) => {
-                RequestMessage::from_multimodal_user_message(msg, attachments)
-            }
-            _ => RequestMessage::from_chat_message(msg),
-        })
-        .collect()
+fn is_chat_compatible_model(model: &str) -> bool {
+    let normalized = model.trim().to_lowercase();
+    !(normalized.starts_with("agnes-image-") || normalized.starts_with("agnes-video-"))
 }

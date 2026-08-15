@@ -85,6 +85,20 @@ export const AGENT_TOOLS: AgentToolConfig[] = [
       '为新人培训课程生成一张封面图，突出学习氛围、办公场景和成长感',
     ],
   },
+  {
+    id: 'video',
+    name: '视频制作',
+    shortName: '视频',
+    description: '品牌短片、宣传片、产品演示视频和动态主视觉生成',
+    artifactLabel: '视频结果',
+    promptPlaceholder: '例如：生成产品发布短片、活动宣传视频、官网头图视频或短视频广告，说明场景、镜头和风格',
+    examples: [
+      '制作一条 AI 工作台产品宣传短片，突出多智能体协作、效率提升和未来科技感',
+      '生成一条适合官网首屏的横版视频，展示智能办公、数据流和团队协同场景',
+      '做一个活动宣传短视频，适合社媒投放，突出节奏感、氛围感和品牌主视觉',
+      '生成一条产品功能演示视频，展示上传资料、生成文档、PPT 和图表的完整链路',
+    ],
+  },
 ]
 
 export function getAgentTool(id: ToolKind | string): AgentToolConfig {

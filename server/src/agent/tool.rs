@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::models::Artifact;
+use crate::models::{Artifact, ChatAttachment};
 
 /// 工具执行上下文
 #[derive(Clone)]
@@ -13,6 +13,7 @@ pub struct ToolContext {
     pub user_id: String,
     pub project_id: Option<String>,
     pub preferred_model: Option<String>,
+    pub attachments: Vec<ChatAttachment>,
     /// SSE 推送回调（向前端发送实时进度）
     pub emit: Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>,
     /// 共享上下文（跨工具传递，如 PPT 大纲规划）
@@ -25,6 +26,7 @@ impl ToolContext {
         user_id: String,
         project_id: Option<String>,
         preferred_model: Option<String>,
+        attachments: Vec<ChatAttachment>,
         emit: impl Fn(&str, serde_json::Value) + Send + Sync + 'static,
     ) -> Self {
         Self {
@@ -32,6 +34,7 @@ impl ToolContext {
             user_id,
             project_id,
             preferred_model,
+            attachments,
             emit: Arc::new(emit),
             scratchpad: Arc::new(Mutex::new(HashMap::new())),
         }

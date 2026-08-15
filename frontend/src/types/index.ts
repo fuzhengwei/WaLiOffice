@@ -1,7 +1,7 @@
 // ===== 工具智能体 =====
-export type ToolKind = 'general' | 'ppt' | 'doc' | 'drawio' | 'excel' | 'image' | 'code';
+export type ToolKind = 'general' | 'ppt' | 'doc' | 'drawio' | 'excel' | 'image' | 'video' | 'code';
 
-export type ArtifactKind = 'document' | 'markdown' | 'ppt' | 'drawio' | 'sheet' | 'image' | 'code' | 'mixed' | 'search';
+export type ArtifactKind = 'document' | 'markdown' | 'ppt' | 'drawio' | 'sheet' | 'image' | 'video' | 'code' | 'mixed' | 'search';
 
 export interface ChatAttachment {
   id: string;

@@ -42,13 +42,15 @@ impl RequestMessage {
                     .map(|value| !value.trim().is_empty())
                     .unwrap_or(false)
         }) {
-            content.push(json!({
-                "type": "image_url",
-                "image_url": {
-                    "url": attachment.data_url.clone().unwrap_or_default(),
-                    "detail": "high",
-                }
-            }));
+            if let Some(image_url) = normalize_image_url(attachment) {
+                content.push(json!({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image_url,
+                        "detail": "high",
+                    }
+                }));
+            }
         }
 
         if content.is_empty() {
@@ -62,6 +64,23 @@ impl RequestMessage {
             tool_call_id: msg.tool_call_id.clone(),
         }
     }
+}
+
+fn normalize_image_url(attachment: &crate::models::ChatAttachment) -> Option<String> {
+    let value = attachment.data_url.as_deref()?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.starts_with("data:") || value.starts_with("http://") || value.starts_with("https://") {
+        return Some(value.to_string());
+    }
+
+    let mime = if attachment.mime_type.trim().is_empty() {
+        "image/png"
+    } else {
+        attachment.mime_type.trim()
+    };
+    Some(format!("data:{mime};base64,{value}"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

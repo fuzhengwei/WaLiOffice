@@ -1,4 +1,4 @@
-import { Bot, BrainCircuit, ChevronDown, Eraser, FileText, Folder, FolderPlus, Image, LayoutDashboard, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Settings as SettingsIcon, Sheet, Sparkles, Trash2 } from 'lucide-react'
+import { Bot, BrainCircuit, ChevronDown, Clapperboard, Eraser, FileText, Folder, FolderPlus, Image, LayoutDashboard, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Settings as SettingsIcon, Sheet, Sparkles, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { ChatMessage, ConversationRecord, PPTProject, ToolKind, ProjectMeta } from '@/types'
 
@@ -32,6 +32,7 @@ const iconMap: Record<ToolKind, any> = {
   drawio: PenTool,
   excel: Sheet,
   image: Image,
+  video: Clapperboard,
   code: BrainCircuit,
 }
 
@@ -42,6 +43,7 @@ const toolColors: Record<ToolKind, string> = {
   drawio: 'bg-violet-500',
   excel: 'bg-amber-500',
   image: 'bg-pink-500',
+  video: 'bg-rose-500',
   code: 'bg-slate-500',
 }
 
@@ -52,6 +54,7 @@ const toolLabel: Record<ToolKind, string> = {
   drawio: 'draw.io',
   excel: 'Excel',
   image: '图像',
+  video: '视频',
   code: 'Code',
 }
 

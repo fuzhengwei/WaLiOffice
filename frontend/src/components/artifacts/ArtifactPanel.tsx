@@ -1,4 +1,4 @@
-import { Code2, Download, Eye, GripVertical, Image, Layers3, Maximize2, Minimize2, PenTool, Pencil, Save, Sparkles } from 'lucide-react'
+import { Clapperboard, Code2, Download, Eye, GripVertical, Image, Layers3, Maximize2, Minimize2, PenTool, Pencil, Save, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -43,7 +43,7 @@ function createFallbackDrawioXml(title = '综合 Agent 工作台流程') {
 
 function EmptyArtifact({ activeTool }: { activeTool: ToolKind }) {
   const labels: Record<string, string> = {
-    general: '综合任务产物', ppt: 'PPT 演示文稿', doc: '文档', drawio: 'draw.io 图表', excel: '在线表格', image: '图像结果', code: '代码结果',
+    general: '综合任务产物', ppt: 'PPT 演示文稿', doc: '文档', drawio: 'draw.io 图表', excel: '在线表格', image: '图像结果', video: '视频结果', code: '代码结果',
   }
   return (
     <div className="max-w-md text-center text-surface-400">
@@ -415,18 +415,46 @@ function SheetArtifact({ artifact, onUpdate, onExport }: { artifact: Artifact, o
   )
 }
 
+function downloadFromUrl(url: string, filename: string) {
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.target = '_blank'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
 function ImageArtifact({ artifact }: { artifact: Artifact }) {
   const prompt = artifact.content?.prompt || '等待图像 Agent 生成提示词或图片。'
   const images: string[] = artifact.content?.images || []
-  const variants: Array<{ style?: string; prompt?: string }> = artifact.content?.data?.prompts || []
+  const variants: Array<{ style?: string; prompt?: string; url?: string }> = artifact.content?.variants || artifact.content?.data?.prompts || []
   return (
     <div className="w-full max-w-3xl space-y-4">
       {images.length > 0 ? (
         <div className="grid grid-cols-2 gap-4">
-          {images.map((src) => <img key={src} src={src} className="aspect-video rounded-3xl border border-surface-200 object-cover" />)}
+          {images.map((src, index) => (
+            <div key={src} className="space-y-2">
+              <img src={src} className="aspect-video rounded-3xl border border-surface-200 object-cover" />
+              <button
+                type="button"
+                onClick={() => downloadFromUrl(src, `${artifact.title || 'image'}-${index + 1}.png`)}
+                className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-surface-700 hover:bg-surface-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                下载图片
+              </button>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="aspect-video rounded-3xl border border-surface-200 bg-gradient-to-br from-violet-100 via-white to-sky-100 flex items-center justify-center text-surface-400"><Image className="h-10 w-10" /></div>
+      )}
+      {artifact.content?.description && (
+        <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">
+          <div className="mb-1 text-xs font-semibold text-surface-400">创意说明</div>
+          {artifact.content.description}
+        </div>
       )}
       <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">
         <div className="mb-1 text-xs font-semibold text-surface-400">图像提示词</div>
@@ -442,6 +470,49 @@ function ImageArtifact({ artifact }: { artifact: Artifact }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+function VideoArtifact({ artifact }: { artifact: Artifact }) {
+  const videoUrl = artifact.content?.video_url || ''
+  const prompt = artifact.content?.prompt || '等待视频 Agent 生成镜头脚本。'
+  return (
+    <div className="w-full max-w-3xl space-y-4">
+      {videoUrl ? (
+        <div className="overflow-hidden rounded-3xl border border-surface-200 bg-black shadow-sm">
+          <video src={videoUrl} controls className="aspect-video w-full bg-black" />
+        </div>
+      ) : (
+        <div className="aspect-video rounded-3xl border border-surface-200 bg-gradient-to-br from-rose-100 via-white to-orange-100 flex items-center justify-center text-surface-400">
+          <Clapperboard className="h-10 w-10" />
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {videoUrl && (
+          <button
+            type="button"
+            onClick={() => downloadFromUrl(videoUrl, `${artifact.title || 'video'}.mp4`)}
+            className="inline-flex items-center gap-1.5 rounded-full bg-surface-950 px-3 py-2 text-xs font-semibold text-white hover:bg-surface-800"
+          >
+            <Download className="h-3.5 w-3.5" />
+            下载 MP4
+          </button>
+        )}
+        {artifact.content?.size && <span className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-surface-600 ring-1 ring-black/[0.05]">分辨率：{artifact.content.size}</span>}
+        {artifact.content?.seconds && <span className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-surface-600 ring-1 ring-black/[0.05]">时长：{artifact.content.seconds}s</span>}
+        {artifact.content?.aspect_ratio && <span className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-surface-600 ring-1 ring-black/[0.05]">比例：{artifact.content.aspect_ratio}</span>}
+      </div>
+      {artifact.content?.description && (
+        <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">
+          <div className="mb-1 text-xs font-semibold text-surface-400">成片说明</div>
+          {artifact.content.description}
+        </div>
+      )}
+      <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">
+        <div className="mb-1 text-xs font-semibold text-surface-400">视频提示词</div>
+        {prompt}
+      </div>
     </div>
   )
 }
@@ -559,6 +630,7 @@ function ArtifactBody({ artifact, activeTool, onUpdate, onExportExcel, onExportD
   if (artifact.kind === 'drawio') return <DrawIoArtifact artifact={artifact} onUpdate={(updates) => onUpdate(artifact.id, updates)} />
   if (artifact.kind === 'sheet') return <SheetArtifact artifact={artifact} onUpdate={(updates) => onUpdate(artifact.id, updates)} onExport={() => onExportExcel(artifact)} />
   if (artifact.kind === 'image') return <ImageArtifact artifact={artifact} />
+  if (artifact.kind === 'video') return <VideoArtifact artifact={artifact} />
   if (artifact.kind === 'search') return <SearchArtifact artifact={artifact} />
   if (artifact.kind === 'code') return <CodeArtifact artifact={artifact} />
   if (artifact.kind === 'mixed') return <MixedArtifact artifact={artifact} />
@@ -616,7 +688,7 @@ export function ArtifactPanel({
   if (!isOpen) return null
 
   const titleMap: Record<string, string> = {
-    general: '动态成果展示', ppt: 'PPT 预览', doc: '文档预览', drawio: 'draw.io 画布', excel: '在线 Excel', image: '图像结果', code: '代码结果', search: '搜索结果',
+    general: '动态成果展示', ppt: 'PPT 预览', doc: '文档预览', drawio: 'draw.io 画布', excel: '在线 Excel', image: '图像结果', video: '视频结果', code: '代码结果', search: '搜索结果',
   }
   const artifactKindLabel: Record<string, string> = {
     document: 'Word',
@@ -625,6 +697,7 @@ export function ArtifactPanel({
     sheet: 'Excel',
     ppt: 'PPT',
     image: '图片',
+    video: '视频',
     search: '搜索',
     code: '代码',
     mixed: '综合',

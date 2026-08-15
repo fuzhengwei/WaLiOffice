@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
 import type { AppSettings, LLMProfile, MCPServiceConfig } from '@/types'
 
-const DEFAULT_MODELS = ['glm_for_coding', 'agnes-2.0-flash']
+const DEFAULT_MODELS = ['glm_for_coding', 'agnes-2.0-flash', 'agnes-2.5-flash', 'agnes-image-2.1-flash', 'agnes-video-v2.0']
 
 interface SettingsDialogProps {
   open: boolean

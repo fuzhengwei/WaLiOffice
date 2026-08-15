@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use super::context::{compact_context, DEFAULT_CONTEXT_CONFIG};
 use super::registry::REGISTRY;
-use super::tool::{ToolArtifact, ToolContext, ToolResult};
-use crate::llm::{FunctionDef, LlmClient};
+use super::tool::{ToolContext, ToolResult};
+use crate::llm::FunctionDef;
 use crate::models::{Artifact, ChatMessage};
 
 /// Agent 事件（通过 channel 向上层推送）
@@ -76,7 +76,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = r#"你是一个智能办公 Agent。你可�
 - 没有工具需要调用时，返回简洁的自然语言回复
 - 不要在文本中模拟工具调用结果"#;
 
-const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮助用户生成 PPT、Word 文档、Markdown 文档、表格、流程图和图片结果。
+const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮助用户生成 PPT、Word 文档、Markdown 文档、表格、流程图、图片结果和视频结果。
 
 ## 可用工具
 - ppt_plan: 规划 PPT 大纲（只读，不产生最终产物）
@@ -85,7 +85,8 @@ const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮�
 - md_generate: 生成 Markdown 文档（知识库/README/说明文档/纪要/调研整理）
 - sheet_generate: 生成结构化表格（可导出 Excel）
 - drawio_generate: 生成 draw.io 可编辑图表（流程图/架构图等）
-- image_prompt: 生成图片结果，包含多风格提示词和可直接预览的图片链接
+- image_prompt: 基于 Agnes Image 2.1 Flash 生成图片结果，返回可直接预览的图片链接
+- video_generate: 基于 Agnes Video V2.0 生成视频结果，返回可直接预览的 mp4 视频链接
 - web_search: 联网搜索公开网页资料，适合查找最新信息、官网说明、新闻和政策
 
 ## 意图识别规则
@@ -94,7 +95,8 @@ const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮�
 - Markdown/md/README/知识库/说明文档/操作手册/会议纪要/调研整理 → md_generate
 - excel/xlsx/表格/数据分析/排期/预算/数据指标 → sheet_generate
 - draw.io/流程图/架构图/泳道图/拓扑图/ER图 → drawio_generate
-- 只有当用户明确要“生成图片/做海报/做封面/logo/配图/主视觉/插画/出图”时，才调用 image_prompt
+- 只有当用户明确要“生成图片/做海报/做封面/logo/配图/主视觉/插画/出图/改图/换风格/基于参考图生成”时，才调用 image_prompt；如本轮上传了图片且用户要求改图、生成同风格图片、换背景、做海报，使用 image_to_image
+- 只有当用户明确要“生成视频/做视频/短片/短视频/宣传片/动画/视频广告/片头/转场动画/让图片动起来/图生视频/关键帧动画”时，才调用 video_generate；如本轮上传图片并要求动起来，使用 image_to_video；多图过渡使用 keyframes
 - 如果用户上传了图片，并在问“这是什么”“帮我识别”“提取文字/OCR”“解释图片”“分析截图”“描述图里内容”等理解类问题，不要调用 image_prompt，优先直接结合视觉输入回答
 - 用户需要“最新”“官网”“新闻”“政策”“联网查询”“检索资料”“搜索一下”等外部信息时 → web_search
 - 当用户上传了 md/txt 附件时，要优先把附件正文视作本轮输入上下文，再决定是否继续调用工具
@@ -114,8 +116,9 @@ const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮�
 9. 工具执行完毕后，简洁总结结果给用户，并说明已经生成了哪些文件，以及每个产物适合怎样使用
 10. 如果调用了 web_search，回答中要基于搜索结果组织信息，不要假装亲自访问了不存在的页面
 11. 如果用户上传的是图片附件，要优先尝试直接结合图像理解用户需求；如果当前模型不支持视觉或识别结果不可靠，再明确说明限制，并引导用户补充图片中的文字或关键内容
-12. 对图片类请求先判断是“识图/读图”还是“生成图片”。识图问题直接回答，生成图片才调用 image_prompt
-13. 不要在文本中模拟工具调用结果
+12. 对图片类请求先判断是“识图/读图”还是“生成图片/改图”。识图问题直接回答，生成或编辑图片才调用 image_prompt；有参考图片时优先传入 image_to_image
+13. 对视频类请求优先调用 video_generate，并给出适合场景的镜头感、风格和成片方向；有参考图片时优先做图生视频，多张图做过渡或关键帧动画
+14. 不要在文本中模拟工具调用结果
 额外要求：
 - 如果用户说“综合”“一起生成”“并且再来一个”“同时给我”，默认考虑多文件交付
 - 如果用户既要可视化说明又要汇报材料，优先同时生成 draw.io 和 PPT
@@ -128,7 +131,8 @@ const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮�
   - Markdown：要便于阅读与沉淀，结构清楚，示例充分
   - Excel：字段要真实可用，行列设计要支持实际分析或执行
   - draw.io：节点层次和关系要清楚，布局整齐，适合继续编辑
-  - 图片结果：要有可直接预览的图像链接，同时保留风格化提示词，方便继续优化"#;
+  - 图片结果：要有可直接预览的图像链接，同时保留风格化提示词，方便继续优化
+  - 视频结果：要有可直接预览的视频链接，并说明视频时长、尺寸和适用场景"#;
 
 /// 运行 Agent 循环，通过 channel 推送事件
 pub async fn run_agent_loop(
@@ -152,7 +156,7 @@ pub async fn run_agent_loop(
 
         // 获取工具定义
         let all_tools = REGISTRY.list().await;
-        let function_defs: Vec<FunctionDef> = if let Some(ref allowed) = config.allowed_tools {
+        let mut function_defs: Vec<FunctionDef> = if let Some(ref allowed) = config.allowed_tools {
             REGISTRY
                 .to_function_defs()
                 .await
@@ -162,6 +166,9 @@ pub async fn run_agent_loop(
         } else {
             REGISTRY.to_function_defs().await
         };
+        if user_attachments.iter().any(|item| item.kind == "image") {
+            function_defs.clear();
+        }
 
         // 上下文压缩
         let compacted = compact_context(history, &DEFAULT_CONTEXT_CONFIG, &client).await;
@@ -187,10 +194,15 @@ pub async fn run_agent_loop(
 
         for turn in 0..max_turns {
             // 调用 LLM
+            let tools = if function_defs.is_empty() {
+                None
+            } else {
+                Some(function_defs.as_slice())
+            };
             let llm_response = match client
                 .chat_with_attachments(
                     &conversation,
-                    Some(&function_defs),
+                    tools,
                     if user_attachments.is_empty() {
                         None
                     } else {
@@ -424,6 +436,7 @@ fn map_artifact_to_tool_kind(kind: &str) -> String {
         "drawio" => "drawio",
         "sheet" => "excel",
         "image" => "image",
+        "video" => "video",
         "code" => "code",
         _ => "general",
     }

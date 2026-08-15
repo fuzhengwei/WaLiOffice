@@ -1,13 +1,10 @@
-use axum::extract::Query;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
 use futures::stream::Stream;
 use std::convert::Infallible;
 use std::time::Duration;
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_stream::StreamExt;
 
 use crate::agent::{run_agent_loop, AgentConfig, AgentEvent};
 use crate::auth::middleware::AuthUser;
@@ -100,7 +97,15 @@ fn format_attachment_context(attachments: &[ChatAttachment]) -> String {
                             text
                         ));
 
-                    ocr_section
+                    ocr_section.or_else(|| {
+                        Some(format!(
+                            "附件 {}（图片）\n- 文件名：{}\n- MIME：{}\n- 大小：{} 字节\n- 说明：图片内容已作为视觉输入随本轮消息一并发送，请直接观察图片回答用户问题。",
+                            index + 1,
+                            attachment.name,
+                            attachment.mime_type,
+                            attachment.size,
+                        ))
+                    })
                 } else {
                     let ocr_text = crate::image_ocr::extract_text_from_attachment(attachment)
                         .ok()
@@ -127,7 +132,7 @@ fn format_attachment_context(attachments: &[ChatAttachment]) -> String {
 
     let image_note = if image_attachment_count > 0 {
         format!(
-            "用户本次还上传了 {} 张图片，图片数据已随本轮消息一并发送给模型。请优先直接结合图像内容回答，不要忽略图片，也不要要求用户重复上传。",
+            "用户本次还上传了 {} 张图片；服务端会把带 data URL 的图片作为视觉输入发送给模型，请优先直接结合图像内容回答。",
             image_attachment_count
         )
     } else {
@@ -162,10 +167,7 @@ fn build_user_message(req: &ChatRequest) -> String {
     }
 }
 
-fn merge_session_artifacts(
-    existing: Vec<Artifact>,
-    current_turn: Vec<Artifact>,
-) -> Vec<Artifact> {
+fn merge_session_artifacts(existing: Vec<Artifact>, current_turn: Vec<Artifact>) -> Vec<Artifact> {
     let mut merged = existing;
 
     for artifact in current_turn {
@@ -251,6 +253,7 @@ async fn chat_stream(
         user_id.clone(),
         project_id.clone(),
         req.model.clone(),
+        req.attachments.clone().unwrap_or_default(),
         emit,
     );
 
@@ -263,7 +266,7 @@ async fn chat_stream(
             serde_json::json!({
                 "phase": "running",
                 "step": "接收附件",
-                "detail": format!("已接收 {} 个附件（支持 md / txt / 图片，图片将优先尝试视觉识别）", attachments.len()),
+                "detail": format!("已接收 {} 个附件（支持 md / txt / 图片；图片会优先尝试视觉识别，若视觉输入失败则退化为 OCR/文本辅助）", attachments.len()),
                 "attachment_count": attachments.len(),
                 "at": chrono::Utc::now().to_rfc3339(),
             }),

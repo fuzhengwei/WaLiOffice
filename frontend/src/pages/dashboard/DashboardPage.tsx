@@ -14,6 +14,7 @@ const TOOL_LABELS: Record<string, string> = {
   drawio: '绘图',
   excel: '表格',
   image: '图像',
+  video: '视频',
   code: '代码',
 }
 

@@ -68,6 +68,14 @@ function buildHistoryProcessLogs(session: PersistedSession) {
 const IMAGE_ATTACHMENT_MAX_EDGE = 1600
 const IMAGE_ATTACHMENT_TARGET_BYTES = 1.8 * 1024 * 1024
 
+function isMediaOnlyModel(model?: string) {
+  return /^agnes-(image|video)-/i.test(model || '')
+}
+
+function pickChatModel(models: string[], fallback = 'gpt-5.5') {
+  return models.find((model) => !isMediaOnlyModel(model)) || fallback
+}
+
 function loadImageElement(src: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image()
@@ -143,8 +151,11 @@ export default function Studio() {
       const res = await settingsApi.getSettings()
       const s = res.data as AppSettings
       setSettings(s)
-      setModelProfiles(s.llm_profiles || [])
-      if (s.active_model) setSelectedModel(s.active_model)
+      const profiles = s.llm_profiles || []
+      setModelProfiles(profiles)
+      const chatModels = Array.from(new Set(profiles.flatMap((profile) => profile.models || []))).filter((model) => !isMediaOnlyModel(model))
+      if (s.active_model && !isMediaOnlyModel(s.active_model)) setSelectedModel(s.active_model)
+      else setSelectedModel(pickChatModel(chatModels, selectedModel))
       if (s.basic?.default_theme) setSelectedTheme(s.basic.default_theme)
     } catch (err) {
       console.error('Load settings error:', err)
@@ -260,6 +271,10 @@ export default function Studio() {
     setShowArtifactPanel(false)
     setFollowLatestSlide(true)
     setPptProgress(null)
+    setStreamPhase('idle')
+    setStreamStatus('空闲')
+    setProcessLogs([])
+    setAttachments([])
   }
 
   const handleSelectConversation = async (id: string) => {
@@ -349,8 +364,11 @@ export default function Studio() {
       const res = await settingsApi.saveSettings(newSettings)
       const saved = res.data as AppSettings
       setSettings(saved)
-      setModelProfiles(saved.llm_profiles || [])
-      if (saved.active_model) setSelectedModel(saved.active_model)
+      const profiles = saved.llm_profiles || []
+      setModelProfiles(profiles)
+      const chatModels = Array.from(new Set(profiles.flatMap((profile) => profile.models || []))).filter((model) => !isMediaOnlyModel(model))
+      if (saved.active_model && !isMediaOnlyModel(saved.active_model)) setSelectedModel(saved.active_model)
+      else setSelectedModel(pickChatModel(chatModels, selectedModel))
       if (saved.basic?.default_theme) setSelectedTheme(saved.basic.default_theme)
       setActiveView('chat')
     } catch (err) {
@@ -594,12 +612,14 @@ export default function Studio() {
     const hasImageAttachment = pendingAttachments.some((item) => item.kind === 'image')
     const hasImageRecognitionIntent = /这是什么|识别|识图|看图|帮我看看|图里|图片里|截图里|读图|ocr|提取文字|解析图片|说明图片|分析图片|描述图片/.test(lower)
     const hasImageGenerationIntent = /生成.*图|做.*图|画.*图|出图|海报|封面|logo|配图|主视觉|插画|banner|视觉稿|图像创作/.test(lower)
+    const hasVideoGenerationIntent = /生成.*视频|做.*视频|制作.*视频|短片|短视频|宣传片|动画|视频广告|片头|转场|动态海报|mv|motion/.test(lower)
 
     if (/draw\.io|drawio|流程图|架构图|泳道图|拓扑图|er图/.test(lower)) hits.push('drawio')
     if (/excel|xlsx|表格|数据分析|公式|在线表/.test(lower)) hits.push('excel')
     if (/文档|报告|prd|方案|纪要|文章|docx|markdown|readme|知识库|说明文档|操作手册|md\b/.test(lower)) hits.push('doc')
     if (/ppt|演示文稿|幻灯片|presentation|做个.*汇报|生成.*汇报|制作.*汇报|汇报材料/.test(lower)) hits.push('ppt')
     if (hasImageGenerationIntent || (/图片|图像/.test(lower) && !hasImageRecognitionIntent && !hasImageAttachment)) hits.push('image')
+    if (hasVideoGenerationIntent || /视频|video/.test(lower)) hits.push('video')
     const wantsMultiple = /同时|一起|并且|再来|外加|附上|配一张|再补一个|多个|一套/.test(lower)
     const uniqueHits = Array.from(new Set(hits))
     if (hasImageAttachment && !hasImageGenerationIntent) return 'general'
@@ -787,6 +807,19 @@ export default function Studio() {
               setStreamStatus(data.detail || data.step || '正在处理...')
               setProcessLogs((logs) => [...logs.slice(-8), `${data.step || '进度'}：${data.detail || ''}`])
               break
+
+            case 'tool_result': {
+              const toolName = data.tool || 'unknown'
+              const detail = data.error || data.result?.error || data.result?.observation || ''
+              if (data.success) {
+                setProcessLogs((logs) => [...logs.slice(-8), `工具 ${toolName} ✓ 完成`])
+              } else {
+                const message = detail ? String(detail).slice(0, 300) : '未返回具体错误'
+                setStreamStatus(`工具 ${toolName} 失败：${message}`)
+                setProcessLogs((logs) => [...logs.slice(-8), `工具 ${toolName} ✗ 失败：${message}`])
+              }
+              break
+            }
 
             case 'done':
               setStreamPhase('done')
@@ -1006,6 +1039,38 @@ export default function Studio() {
     }
     if (artifact.kind === 'drawio') {
       await handleExportDrawio(artifact)
+      return
+    }
+    if (artifact.kind === 'image') {
+      const imageUrl = artifact.content?.images?.[0]
+      if (!imageUrl) {
+        alert('当前图片结果暂无可下载内容')
+        return
+      }
+      const safeTitle = (artifact.title || 'image').replace(/[\\/:*?"<>|]/g, '_')
+      const link = document.createElement('a')
+      link.href = imageUrl
+      link.download = `${safeTitle}.png`
+      link.target = '_blank'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      return
+    }
+    if (artifact.kind === 'video') {
+      const videoUrl = artifact.content?.video_url
+      if (!videoUrl) {
+        alert('当前视频结果暂无可下载内容')
+        return
+      }
+      const safeTitle = (artifact.title || 'video').replace(/[\\/:*?"<>|]/g, '_')
+      const link = document.createElement('a')
+      link.href = videoUrl
+      link.download = `${safeTitle}.mp4`
+      link.target = '_blank'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
     }
   }
 

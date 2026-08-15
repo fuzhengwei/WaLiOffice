@@ -10,7 +10,12 @@ use crate::state;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 
-const BUILTIN_MODELS: &[&str] = &["agnes-2.0-flash"];
+const BUILTIN_MODELS: &[&str] = &[
+    "agnes-2.0-flash",
+    "agnes-2.5-flash",
+    "agnes-image-2.1-flash",
+    "agnes-video-v2.0",
+];
 
 pub fn router() -> Router {
     Router::new()

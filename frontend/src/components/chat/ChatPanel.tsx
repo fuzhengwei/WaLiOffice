@@ -1,4 +1,5 @@
-import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Palette, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X } from 'lucide-react'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Palette, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X, Clapperboard } from 'lucide-react'
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
 import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, LLMProfile, PPTProject, ToolKind } from '@/types'
@@ -184,6 +185,7 @@ const toolDot: Record<ToolKind, string> = {
   drawio: 'bg-violet-500',
   excel: 'bg-amber-500',
   image: 'bg-pink-500',
+  video: 'bg-rose-500',
   code: 'bg-slate-500',
 }
 
@@ -194,6 +196,7 @@ const toolIcon: Record<ToolKind, typeof Bot> = {
   drawio: PenTool,
   excel: Sheet,
   image: ImageIcon,
+  video: Clapperboard,
   code: Terminal,
 }
 
@@ -212,14 +215,14 @@ interface ParsedLog {
 
 function parseLogEntry(log: string, idx: number): ParsedLog {
   // 工具调用日志: "工具 ppt ✓ 完成" or "工具 excel ✗ 失败"
-  const toolMatch = log.match(/^工具\s+(\S+)\s+(✓|✗)/)
+  const toolMatch = log.match(/^工具\s+(\S+)\s+(✓|✗)\s*(.*)$/)
   if (toolMatch) {
     const tool = toolMatch[1] as ToolKind
     return {
       id: idx,
       icon: toolIcon[tool] || Wrench,
       title: `调用 ${toolMatch[1]}`,
-      detail: '',
+      detail: toolMatch[3] || '',
       status: toolMatch[2] === '✓' ? 'done' : 'error',
       isTool: true,
       toolName: toolMatch[1],
@@ -280,6 +283,15 @@ export function ChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const tool = getAgentTool(activeTool)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const [processPanelExpanded, setProcessPanelExpanded] = useState(true)
+
+  useEffect(() => {
+    if (isStreaming) {
+      setProcessPanelExpanded(true)
+      return
+    }
+    if (streamPhase === 'done' || streamPhase === 'error') setProcessPanelExpanded(false)
+  }, [isStreaming, streamPhase])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean }
@@ -307,12 +319,38 @@ export function ChatPanel({
   }
 
   const themes = [
-    { id: 'default', name: '默认' },
-    { id: 'business', name: '商务' },
-    { id: 'tech', name: '科技' },
-    { id: 'warm', name: '暖橙' },
-    { id: 'minimal', name: '极简' },
+    {
+      id: 'default',
+      name: '默认',
+      description: '柔和中性',
+      swatchClass: 'from-slate-100 via-white to-stone-200',
+    },
+    {
+      id: 'business',
+      name: '商务',
+      description: '稳重专业',
+      swatchClass: 'from-slate-700 via-slate-500 to-slate-200',
+    },
+    {
+      id: 'tech',
+      name: '科技',
+      description: '冷调未来',
+      swatchClass: 'from-cyan-400 via-sky-500 to-indigo-600',
+    },
+    {
+      id: 'warm',
+      name: '暖橙',
+      description: '温暖亲和',
+      swatchClass: 'from-amber-300 via-orange-400 to-rose-400',
+    },
+    {
+      id: 'minimal',
+      name: '极简',
+      description: '黑白克制',
+      swatchClass: 'from-zinc-900 via-zinc-500 to-zinc-100',
+    },
   ]
+  const activeTheme = themes.find((theme) => theme.id === selectedTheme) || themes[0]
 
   // 解析日志
   const parsedLogs: ParsedLog[] = processLogs.map((log, idx) => parseLogEntry(log, idx))
@@ -327,7 +365,13 @@ export function ChatPanel({
   ] as const
   const currentPhaseIndex = streamPhase === 'thinking' ? 0 : streamPhase === 'generating' ? 1 : streamPhase === 'finishing' || streamPhase === 'done' ? 2 : -1
 
-  const selectableModels = Array.from(new Set(modelProfiles.flatMap((profile) => profile.models || [])))
+  const selectableModels = Array.from(
+    new Set(
+      modelProfiles
+        .flatMap((profile) => profile.models || [])
+        .filter((model) => !/^agnes-(image|video)-/i.test(model))
+    )
+  )
 
   const showProcessPanel = isStreaming || traceEvents.length > 0 || processLogs.length > 0
   const artifactMeta: Record<string, { icon: typeof Bot; label: string; exportLabel?: string }> = {
@@ -336,7 +380,8 @@ export function ChatPanel({
     markdown: { icon: FileEdit, label: 'Markdown 文档', exportLabel: '下载 MD' },
     drawio: { icon: PenTool, label: 'draw.io 图表', exportLabel: '下载 draw.io' },
     sheet: { icon: Sheet, label: 'Excel 表格', exportLabel: '导出 XLSX' },
-    image: { icon: ImageIcon, label: '图片结果' },
+    image: { icon: ImageIcon, label: '图片结果', exportLabel: '下载图片' },
+    video: { icon: Clapperboard, label: '视频结果', exportLabel: '下载 MP4' },
     search: { icon: Sparkles, label: '搜索结果卡片' },
     code: { icon: Terminal, label: '代码结果' },
     mixed: { icon: Bot, label: '综合结果' },
@@ -366,6 +411,7 @@ export function ChatPanel({
     if (artifact.kind === 'drawio') return '图表已生成，支持右侧预览/编辑，也可以下载 draw.io 源文件。'
     if (artifact.kind === 'sheet') return '表格数据已生成，支持右侧查看并导出为 Excel。'
     if (artifact.kind === 'image') return '图像结果已生成，可在右侧查看详情。'
+    if (artifact.kind === 'video') return '视频结果已生成，可在右侧直接播放和下载 mp4。'
     if (artifact.kind === 'search') return `已生成搜索结果卡片，来源：${artifact.content?.provider_label || artifact.content?.provider || '未知来源'}。`
     if (artifact.kind === 'code') return '代码结果已生成，可在右侧查看步骤与内容。'
     return '综合产物已生成，可在右侧继续查看详细内容。'
@@ -377,6 +423,8 @@ export function ChatPanel({
     if (artifact.kind === 'markdown') return '.md'
     if (artifact.kind === 'drawio') return '.drawio'
     if (artifact.kind === 'sheet') return '.xlsx'
+    if (artifact.kind === 'image') return '.png'
+    if (artifact.kind === 'video') return '.mp4'
     return '.file'
   }
 
@@ -444,9 +492,15 @@ export function ChatPanel({
 
           {/* 流式执行过程面板 — Codex 风格 */}
           {showProcessPanel && (
-            <div className="overflow-hidden rounded-2xl border border-black/[0.06] bg-white/60 shadow-[0_12px_40px_rgba(24,24,27,0.06)] backdrop-blur-xl">
+            <div className="w-full overflow-hidden rounded-2xl border border-black/[0.06] bg-white/60 shadow-[0_12px_40px_rgba(24,24,27,0.06)] backdrop-blur-xl">
               {/* 阶段指示器 — 紧凑横向 */}
-              <div className="flex items-center gap-1 border-b border-black/[0.04] px-3 py-2">
+              <button
+                type="button"
+                onClick={() => !isStreaming && setProcessPanelExpanded((expanded) => !expanded)}
+                disabled={isStreaming}
+                className="flex w-full items-center gap-1 border-b border-black/[0.04] px-3 py-2 text-left transition-colors hover:bg-white/45 disabled:cursor-default disabled:hover:bg-transparent"
+                aria-expanded={processPanelExpanded}
+              >
                 {phaseConfig.map((phase, idx) => {
                   const PhaseIcon = phase.icon
                   const active = idx === currentPhaseIndex && isStreaming
@@ -467,15 +521,16 @@ export function ChatPanel({
                     </Fragment>
                   )
                 })}
-                <div className="ml-auto flex items-center gap-1.5 text-[11px] text-surface-400">
-                  {isStreaming ? <Loader2 className="h-3 w-3 animate-spin" /> : streamPhase === 'error' ? <AlertCircle className="h-3 w-3 text-red-500" /> : <Check className="h-3 w-3 text-emerald-600" />}
-                  <span className="max-w-[200px] truncate">{streamStatus}</span>
+                <div className="ml-auto flex min-w-0 items-center gap-1.5 text-[11px] text-surface-400">
+                  {isStreaming ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : streamPhase === 'error' ? <AlertCircle className="h-3 w-3 shrink-0 text-red-500" /> : <Check className="h-3 w-3 shrink-0 text-emerald-600" />}
+                  <span className="max-w-[260px] truncate">{streamStatus}</span>
+                  {!isStreaming && <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${processPanelExpanded ? 'rotate-180' : ''}`} />}
                 </div>
-              </div>
+              </button>
 
               {/* 执行步骤日志 — 逐行流式 */}
-              {visibleLogs.length > 0 && (
-                <div className="max-h-[180px] overflow-y-auto px-3 py-2">
+              {processPanelExpanded && visibleLogs.length > 0 && (
+                <div className="max-h-[164px] overflow-y-auto px-3 py-2 [scrollbar-gutter:stable]">
                   <div className="space-y-0.5 font-mono text-[11px] leading-relaxed">
                     {visibleLogs.map((log) => (
                       <div key={log.id} className="flex items-start gap-2 py-0.5">
@@ -616,7 +671,7 @@ export function ChatPanel({
                         <Eye className="h-3.5 w-3.5" />
                         右侧预览
                       </button>
-                      {(selectedArtifact.kind === 'ppt' || selectedArtifact.kind === 'document' || selectedArtifact.kind === 'markdown' || selectedArtifact.kind === 'sheet' || selectedArtifact.kind === 'drawio') && (
+                      {(selectedArtifact.kind === 'ppt' || selectedArtifact.kind === 'document' || selectedArtifact.kind === 'markdown' || selectedArtifact.kind === 'sheet' || selectedArtifact.kind === 'drawio' || selectedArtifact.kind === 'image' || selectedArtifact.kind === 'video') && (
                         <button
                           type="button"
                           onClick={() => onExportArtifact(selectedArtifact)}
@@ -768,19 +823,58 @@ export function ChatPanel({
                 {item.shortName}
               </button>
             ))}
-            <div className="ml-auto flex flex-wrap items-center gap-1.5 text-[11px] text-surface-400">
-              <Palette className="h-3.5 w-3.5" />
-              {themes.map((theme) => (
-                <button
-                  key={theme.id}
-                  type="button"
-                  onClick={() => onThemeChange(theme.id)}
-                  disabled={isStreaming}
-                  className={`rounded-full px-2 py-1 transition-colors ${selectedTheme === theme.id ? 'bg-white text-surface-900 shadow-sm' : 'hover:bg-white/70'}`}
-                >
-                  {theme.name}
-                </button>
-              ))}
+            <div className="ml-auto flex items-center">
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    type="button"
+                    disabled={isStreaming}
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-black/[0.06] bg-white/78 px-2.5 text-[11px] font-medium text-surface-700 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all hover:-translate-y-[0.5px] hover:bg-white hover:shadow-[0_6px_14px_rgba(15,23,42,0.08)] disabled:opacity-50"
+                  >
+                    <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br ${activeTheme.swatchClass} shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]`}>
+                      <Palette className="h-3 w-3 text-white drop-shadow-[0_1px_1px_rgba(15,23,42,0.3)]" />
+                    </span>
+                    <span className="text-surface-500">主题</span>
+                    <span className="font-semibold text-surface-900">{activeTheme.name}</span>
+                    <ChevronDown className="h-3.5 w-3.5 text-surface-400" />
+                  </button>
+                </DropdownMenu.Trigger>
+
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    align="end"
+                    sideOffset={8}
+                    className="z-50 min-w-[228px] rounded-2xl border border-black/[0.06] bg-[#fffdfa]/96 p-2 shadow-[0_18px_48px_rgba(15,23,42,0.16)] backdrop-blur-xl"
+                  >
+                    <div className="px-2 pb-2 pt-1">
+                      <div className="text-[11px] font-semibold text-surface-900">选择主题风格</div>
+                      <div className="mt-0.5 text-[10px] text-surface-400">当前生成内容会优先贴合所选风格。</div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {themes.map((theme) => (
+                        <DropdownMenu.Item
+                          key={theme.id}
+                          onSelect={() => onThemeChange(theme.id)}
+                          className={`flex cursor-pointer items-center gap-2 rounded-2xl px-2 py-2 text-[11px] outline-none transition-colors ${
+                            selectedTheme === theme.id
+                              ? 'bg-surface-950 text-white shadow-sm'
+                              : 'text-surface-700 hover:bg-white focus:bg-white'
+                          }`}
+                        >
+                          <span className={`h-7 w-7 rounded-full bg-gradient-to-br ${theme.swatchClass} shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]`} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-semibold">{theme.name}</span>
+                            <span className={`block text-[10px] ${selectedTheme === theme.id ? 'text-white/70' : 'text-surface-400'}`}>
+                              {theme.description}
+                            </span>
+                          </span>
+                          {selectedTheme === theme.id && <Check className="h-3.5 w-3.5" />}
+                        </DropdownMenu.Item>
+                      ))}
+                    </div>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
             </div>
           </div>
           </div>
