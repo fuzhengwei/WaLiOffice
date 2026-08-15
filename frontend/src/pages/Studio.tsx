@@ -8,7 +8,62 @@ import { ConversationSidebar } from '@/components/history/ConversationSidebar'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { Sparkles, Play, X, PanelRightClose, PanelRight } from 'lucide-react'
-import type { Artifact, ConversationRecord, ToolKind, ProjectMeta, AppSettings, LLMProfile } from '@/types'
+import type { Artifact, ConversationRecord, ToolKind, ProjectMeta, AppSettings, LLMProfile, PersistedSession } from '@/types'
+
+function buildRestoredMessages(session: PersistedSession) {
+  const restored = (session.messages || [])
+    .filter((msg) => (msg.role === 'user' || msg.role === 'assistant') && msg.content?.trim())
+    .map((msg) => ({
+      role: msg.role as 'user' | 'assistant',
+      content: msg.content,
+      timestamp: session.updated_at,
+    }))
+
+  const hasAssistant = restored.some((msg) => msg.role === 'assistant')
+  if (!hasAssistant && session.summary?.trim()) {
+    restored.push({
+      role: 'assistant',
+      content: session.summary,
+      timestamp: session.updated_at,
+    })
+  }
+
+  return restored
+}
+
+function buildHistoryProcessLogs(session: PersistedSession) {
+  const logs: string[] = [`已恢复会话：${session.title || session.id}`]
+
+  for (const msg of session.messages || []) {
+    if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
+      for (const call of msg.tool_calls) {
+        const toolName = call?.function?.name
+        if (toolName) logs.push(`调用工具：${toolName}`)
+      }
+      continue
+    }
+
+    if (msg.role === 'tool' && msg.content) {
+      try {
+        const payload = JSON.parse(msg.content)
+        const detail = payload?.observation || payload?.error || ''
+        if (detail) {
+          logs.push(`工具执行：${String(detail).slice(0, 120)}`)
+        }
+      } catch {
+        logs.push(`工具执行：${msg.content.slice(0, 120)}`)
+      }
+    }
+  }
+
+  if (session.artifacts?.length) {
+    logs.push(`产物汇总：已生成 ${session.artifacts.length} 个产物`)
+  } else if (session.summary?.trim()) {
+    logs.push(`对话总结：${session.summary.slice(0, 120)}`)
+  }
+
+  return logs
+}
 
 export default function Studio() {
   const {
@@ -180,7 +235,7 @@ export default function Studio() {
     setActiveView('chat')
     try {
       const res = await sessionApi.getSession(id)
-      const session = res.data
+      const session = res.data as PersistedSession
       const tool = session.tool_kind || 'general'
       setActiveTool(tool)
       setSessionId(session.id)
@@ -188,13 +243,7 @@ export default function Studio() {
         setActiveProjectId(session.project_id)
       }
       usePPTStore.setState({
-        messages: (session.messages || [])
-          .filter((msg) => msg.role === 'user' || msg.role === 'assistant')
-          .map((msg) => ({
-            role: msg.role as 'user' | 'assistant',
-            content: msg.content,
-            timestamp: session.updated_at,
-          })),
+        messages: buildRestoredMessages(session),
         artifacts: session.artifacts || [],
         activeArtifactId: session.artifacts?.[0]?.id || null,
         isGenerating: false,
@@ -221,12 +270,12 @@ export default function Studio() {
       } else {
         usePPTStore.setState({ project: null, slides: [], currentSlideIndex: 0 })
       }
-      setShowArtifactPanel(tool !== 'general')
+      setShowArtifactPanel((session.artifacts?.length || 0) > 0 || tool !== 'general')
       setFollowLatestSlide(false)
       setPptProgress(null)
-      setStreamPhase('idle')
+      setStreamPhase('done')
       setStreamStatus('已恢复历史会话')
-      setProcessLogs([`已恢复会话：${session.title || session.id}`])
+      setProcessLogs(buildHistoryProcessLogs(session))
     } catch (err) {
       console.error('Select conversation error:', err)
       const errMsg = err instanceof Error ? err.message : '未知错误'
@@ -352,11 +401,16 @@ export default function Studio() {
 
   const inferToolFromMessage = (text: string): ToolKind => {
     const lower = text.toLowerCase()
-    if (/draw\.io|drawio|流程图|架构图|泳道图|拓扑图|er图/.test(lower)) return 'drawio'
-    if (/excel|xlsx|表格|数据分析|公式|在线表/.test(lower)) return 'excel'
-    if (/文档|报告|prd|方案|纪要|文章|docx|markdown/.test(lower)) return 'doc'
-    if (/ppt|演示文稿|幻灯片|presentation|做个.*汇报|生成.*汇报|制作.*汇报|汇报材料/.test(lower)) return 'ppt'
-    if (/图片|图像|海报|封面|logo|配图/.test(lower)) return 'image'
+    const hits: ToolKind[] = []
+    if (/draw\.io|drawio|流程图|架构图|泳道图|拓扑图|er图/.test(lower)) hits.push('drawio')
+    if (/excel|xlsx|表格|数据分析|公式|在线表/.test(lower)) hits.push('excel')
+    if (/文档|报告|prd|方案|纪要|文章|docx|markdown/.test(lower)) hits.push('doc')
+    if (/ppt|演示文稿|幻灯片|presentation|做个.*汇报|生成.*汇报|制作.*汇报|汇报材料/.test(lower)) hits.push('ppt')
+    if (/图片|图像|海报|封面|logo|配图/.test(lower)) hits.push('image')
+    const wantsMultiple = /同时|一起|并且|再来|外加|附上|配一张|再补一个|多个|一套/.test(lower)
+    const uniqueHits = Array.from(new Set(hits))
+    if (uniqueHits.length > 1 || (wantsMultiple && uniqueHits.length > 0)) return 'general'
+    if (uniqueHits.length === 1) return uniqueHits[0]
     return activeTool
   }
 
@@ -472,7 +526,7 @@ export default function Studio() {
             case 'artifact_update':
               if (data.artifact) {
                 upsertArtifact(data.artifact)
-                setActiveTool(data.artifact.tool_kind || inferredTool)
+                setActiveTool(inferredTool === 'general' ? 'general' : (data.artifact.tool_kind || inferredTool))
                 setShowArtifactPanel(true)
                 setStreamPhase(data.artifact.status === 'ready' ? 'finishing' : 'generating')
                 setStreamStatus(`已更新产物：${data.artifact.title || '未命名产物'}`)
@@ -522,6 +576,12 @@ export default function Studio() {
               setStreamPhase('done')
               setStreamStatus('生成完成')
               if (data.session_id) setSessionId(data.session_id)
+              if (Array.isArray(data.artifacts)) {
+                data.artifacts.forEach((artifact: Artifact) => upsertArtifact(artifact))
+                if (data.artifacts.length > 0) {
+                  setShowArtifactPanel(true)
+                }
+              }
               const pptArtifact = (data.artifacts || []).find((item: Artifact) => item.kind === 'ppt')
               if (pptArtifact) {
                 applyPptArtifact(pptArtifact)
@@ -592,14 +652,14 @@ export default function Studio() {
   }
 
 
-  const handleExport = async () => {
-    if (!project) return
+  const handleExport = async (projectId = project?.id, projectTitle = project?.title) => {
+    if (!projectId) return
     try {
-      const res = await pptApi.exportPptx(project.id)
+      const res = await pptApi.exportPptx(projectId)
       const blob = res.data as Blob
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
-      const safeTitle = (project.title || 'presentation').replace(/[\\/:*?"<>|]/g, '_')
+      const safeTitle = (projectTitle || 'presentation').replace(/[\\/:*?"<>|]/g, '_')
       link.href = url
       link.download = `${safeTitle}.pptx`
       document.body.appendChild(link)
@@ -610,6 +670,17 @@ export default function Studio() {
       console.error('Export error:', err)
       alert('导出失败，请重试')
     }
+  }
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
   }
 
   const handleExportExcel = async (artifact: Artifact) => {
@@ -647,6 +718,55 @@ export default function Studio() {
     } catch (err) {
       console.error('DOCX export error:', err)
       alert('Word 导出失败，请重试')
+    }
+  }
+
+  const handleOpenArtifact = (artifactId: string) => {
+    setActiveArtifact(artifactId)
+    setShowArtifactPanel(true)
+    setWideArtifactPanel(true)
+  }
+
+  const handleExportDrawio = async (artifact: Artifact) => {
+    try {
+      const xml = artifact.content?.xml
+      if (!xml) {
+        alert('当前 draw.io 文件暂无可下载内容')
+        return
+      }
+      const safeTitle = (artifact.title || 'diagram').replace(/[\\/:*?"<>|]/g, '_')
+      const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' })
+      downloadBlob(blob, `${safeTitle}.drawio`)
+    } catch (err) {
+      console.error('Draw.io export error:', err)
+      alert('draw.io 下载失败，请重试')
+    }
+  }
+
+  const handleExportArtifact = async (artifact: Artifact) => {
+    if (artifact.kind === 'document') {
+      await handleExportDocx(artifact)
+      return
+    }
+    if (artifact.kind === 'sheet') {
+      await handleExportExcel(artifact)
+      return
+    }
+    if (artifact.kind === 'ppt') {
+      if (artifact.content?.project_id && (!project || project.id !== artifact.content.project_id)) {
+        try {
+          const pptRes = await pptApi.getProject(artifact.content.project_id)
+          setProject(pptRes.data)
+          setSlides(pptRes.data.slides || [])
+        } catch (err) {
+          console.error('Load PPT project before export error:', err)
+        }
+      }
+      await handleExport(artifact.content?.project_id || project?.id, artifact.title || project?.title)
+      return
+    }
+    if (artifact.kind === 'drawio') {
+      await handleExportDrawio(artifact)
     }
   }
 
@@ -753,6 +873,8 @@ export default function Studio() {
                 selectedProjectId={activeProjectId}
                 modelProfiles={modelProfiles}
                 selectedModel={selectedModel}
+                artifacts={artifacts}
+                activeArtifactId={activeArtifactId}
                 onProjectChange={(pid) => pid ? handleSelectProject(pid) : setActiveProjectId(null)}
                 onModelChange={handleModelChange}
                 onToolChange={handleToolChange}
@@ -760,6 +882,8 @@ export default function Studio() {
                 onInputChange={setInput}
                 onSend={handleSend}
                 onStop={handleStop}
+                onOpenArtifact={handleOpenArtifact}
+                onExportArtifact={handleExportArtifact}
                 messagesEndRef={messagesEndRef}
               />
             )}
@@ -787,6 +911,7 @@ export default function Studio() {
             onUpdateArtifact={updateArtifact}
             onExportExcel={handleExportExcel}
             onExportDocx={handleExportDocx}
+            onExportDrawio={handleExportDrawio}
           />
         )}
       </div>

@@ -11,13 +11,43 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::agent::{run_agent_loop, AgentConfig, AgentEvent};
 use crate::error::AppError;
-use crate::models::{ChatMessage, ChatRequest};
+use crate::models::{Artifact, ChatMessage, ChatRequest};
 use crate::auth::middleware::AuthUser;
 use crate::state;
 use crate::db::session_repo;
 
 pub fn router() -> Router {
     Router::new().route("/api/chat/stream", post(chat_stream))
+}
+
+fn looks_like_markdown_document(content: &str) -> bool {
+    let trimmed = content.trim();
+    trimmed.starts_with('#')
+        || trimmed.contains("\n## ")
+        || trimmed.contains("\n- ")
+        || trimmed.contains("\n1. ")
+        || trimmed.contains("```")
+        || trimmed.contains("\n> ")
+        || trimmed.contains("\n|")
+}
+
+fn build_summary_document_artifact(summary: &str, tool_kind: Option<&str>) -> Artifact {
+    let now = chrono::Utc::now().to_rfc3339();
+    Artifact {
+        id: uuid::Uuid::new_v4().to_string(),
+        kind: "document".into(),
+        tool_kind: tool_kind.unwrap_or("doc").to_string(),
+        title: "对话整理结果".into(),
+        status: "ready".into(),
+        content: serde_json::json!({
+            "type": "markdown",
+            "markdown": summary,
+            "source": "assistant_summary",
+        }),
+        version: 1,
+        created_at: now.clone(),
+        updated_at: now,
+    }
 }
 
 async fn chat_stream(
@@ -82,6 +112,7 @@ async fn chat_stream(
 
     // 启动 agent 循环
     let mut event_rx = run_agent_loop(history, user_message, ctx, agent_config, client.clone()).await;
+    let requested_tool_kind = req.tool_kind.clone();
 
     tokio::spawn(async move {
         let mut final_summary = String::new();
@@ -115,6 +146,7 @@ async fn chat_stream(
                 }
                 AgentEvent::Artifact { artifact } => {
                     collected_artifacts.push(artifact.clone());
+                    let _ = session_repo::save_artifacts(&pool_for_save, &session_id_for_save, &collected_artifacts);
                     Event::default().event("artifact_update").data(serde_json::json!({
                         "artifact": artifact,
                         "artifacts": collected_artifacts,
@@ -142,8 +174,20 @@ async fn chat_stream(
                     if collected_artifacts.is_empty() {
                         collected_artifacts = artifacts.clone();
                     }
+                    if collected_artifacts.is_empty()
+                        && (requested_tool_kind.as_deref() == Some("doc") || looks_like_markdown_document(&summary))
+                    {
+                        collected_artifacts.push(build_summary_document_artifact(&summary, requested_tool_kind.as_deref()));
+                    }
+                    let _ = session_repo::update_summary(
+                        &pool_for_save,
+                        &session_id_for_save,
+                        &summary.chars().take(240).collect::<String>(),
+                    );
+                    let _ = session_repo::save_artifacts(&pool_for_save, &session_id_for_save, &collected_artifacts);
                     Event::default().event("done").data(serde_json::json!({
                         "session_id": session_id_for_save,
+                        "summary": summary,
                         "artifacts": collected_artifacts,
                     }).to_string())
                 }

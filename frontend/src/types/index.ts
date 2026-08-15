@@ -86,11 +86,17 @@ export interface ProjectMeta {
 export interface PersistedSession {
   id: string;
   owner_id: string;
-  messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string }>;
+  messages: Array<{
+    role: 'user' | 'assistant' | 'system' | 'tool';
+    content: string;
+    tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>;
+    tool_call_id?: string;
+  }>;
   artifacts?: Artifact[];
   project_id?: string;
   tool_kind?: ToolKind;
   title: string;
+  summary?: string;
   created_at: string;
   updated_at: string;
 }

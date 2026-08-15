@@ -1,4 +1,4 @@
-use crate::models::ChatMessage;
+use crate::models::{Artifact, ChatMessage};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use crate::error::AppResult;
@@ -15,6 +15,21 @@ pub struct SessionRow {
     pub message_count: i64,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDetail {
+    pub id: String,
+    pub owner_id: String,
+    pub project_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub title: String,
+    pub summary: Option<String>,
+    pub message_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub messages: Vec<ChatMessage>,
+    pub artifacts: Vec<Artifact>,
 }
 
 pub fn create(pool: &DbPool, owner_id: &str, project_id: Option<&str>, tool_kind: Option<&str>, title: &str) -> AppResult<SessionRow> {
@@ -52,20 +67,101 @@ pub fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<SessionRow>> {
     }
 }
 
-pub fn list_by_owner(pool: &DbPool, owner_id: &str, limit: i64) -> AppResult<Vec<SessionRow>> {
+pub fn list_by_owner(pool: &DbPool, owner_id: &str, limit: i64, query: Option<&str>) -> AppResult<Vec<SessionRow>> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let mut stmt = conn.prepare(
-        "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, created_at, updated_at
-         FROM sessions WHERE owner_id = ?1 ORDER BY updated_at DESC LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(params![owner_id, limit], |row| Ok(SessionRow {
-        id: row.get(0)?, owner_id: row.get(1)?, project_id: row.get(2)?, tool_kind: row.get(3)?,
-        title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?,
-        created_at: row.get(7)?, updated_at: row.get(8)?,
-    }))?;
+    let q = query.map(|item| format!("%{}%", item.trim())).filter(|item| item != "%%");
     let mut result = Vec::new();
-    for row in rows { result.push(row?); }
+    if let Some(ref qv) = q {
+        let mut stmt = conn.prepare(
+            "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, created_at, updated_at
+             FROM sessions
+             WHERE owner_id = ?1 AND (title LIKE ?2 OR COALESCE(summary, '') LIKE ?2)
+             ORDER BY updated_at DESC LIMIT ?3"
+        )?;
+        let rows = stmt.query_map(params![owner_id, qv, limit], |row| Ok(SessionRow {
+            id: row.get(0)?, owner_id: row.get(1)?, project_id: row.get(2)?, tool_kind: row.get(3)?,
+            title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?,
+            created_at: row.get(7)?, updated_at: row.get(8)?,
+        }))?;
+        for row in rows {
+            result.push(row?);
+        }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, created_at, updated_at
+             FROM sessions WHERE owner_id = ?1 ORDER BY updated_at DESC LIMIT ?2"
+        )?;
+        let rows = stmt.query_map(params![owner_id, limit], |row| Ok(SessionRow {
+            id: row.get(0)?, owner_id: row.get(1)?, project_id: row.get(2)?, tool_kind: row.get(3)?,
+            title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?,
+            created_at: row.get(7)?, updated_at: row.get(8)?,
+        }))?;
+        for row in rows {
+            result.push(row?);
+        }
+    }
     Ok(result)
+}
+
+pub fn update_summary(pool: &DbPool, session_id: &str, summary: &str) -> AppResult<()> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE sessions SET summary = ?1, updated_at = ?2 WHERE id = ?3",
+        params![summary, &now, session_id],
+    )?;
+    Ok(())
+}
+
+pub fn save_artifacts(pool: &DbPool, session_id: &str, artifacts: &[Artifact]) -> AppResult<()> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let payload = serde_json::to_string(artifacts)?;
+    conn.execute(
+        "INSERT INTO session_artifacts (id, session_id, payload, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(session_id) DO UPDATE SET
+           payload = excluded.payload,
+           updated_at = excluded.updated_at",
+        params![uuid::Uuid::new_v4().to_string(), session_id, payload, &now, &now],
+    )?;
+    Ok(())
+}
+
+pub fn get_artifacts(pool: &DbPool, session_id: &str) -> AppResult<Vec<Artifact>> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let row = conn.query_row(
+        "SELECT payload FROM session_artifacts WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get::<_, String>(0),
+    );
+    match row {
+        Ok(payload) => Ok(serde_json::from_str::<Vec<Artifact>>(&payload)?),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(vec![]),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn get_session_detail(pool: &DbPool, session_id: &str) -> AppResult<Option<SessionDetail>> {
+    let session = match find_by_id(pool, session_id)? {
+        Some(session) => session,
+        None => return Ok(None),
+    };
+    let messages = get_messages(pool, session_id, 100)?;
+    let artifacts = get_artifacts(pool, session_id)?;
+    Ok(Some(SessionDetail {
+        id: session.id,
+        owner_id: session.owner_id,
+        project_id: session.project_id,
+        tool_kind: session.tool_kind,
+        title: session.title,
+        summary: session.summary,
+        message_count: session.message_count,
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+        messages,
+        artifacts,
+    }))
 }
 
 pub fn add_message(pool: &DbPool, session_id: &str, msg: &ChatMessage) -> AppResult<()> {

@@ -1,7 +1,7 @@
-import { AlertCircle, Check, Circle, Loader2, Palette, Send, Sparkles, Square, Wand2, ChevronRight, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot } from 'lucide-react'
+import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Palette, Send, Sparkles, Square, Wand2, ChevronRight, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot } from 'lucide-react'
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment } from 'react'
-import type { AgentTraceEvent, ChatMessage, LLMProfile, PPTProject, ToolKind } from '@/types'
+import type { AgentTraceEvent, Artifact, ChatMessage, LLMProfile, PPTProject, ToolKind } from '@/types'
 
 interface ChatPanelProps {
   messages: ChatMessage[]
@@ -17,6 +17,8 @@ interface ChatPanelProps {
   selectedProjectId: string | null
   modelProfiles: LLMProfile[]
   selectedModel: string
+  artifacts: Artifact[]
+  activeArtifactId: string | null
   onProjectChange: (projectId: string | null) => void
   onModelChange: (model: string) => void
   onToolChange: (tool: ToolKind) => void
@@ -24,6 +26,8 @@ interface ChatPanelProps {
   onInputChange: (v: string) => void
   onSend: () => void
   onStop: () => void
+  onOpenArtifact: (artifactId: string) => void
+  onExportArtifact: (artifact: Artifact) => void
   messagesEndRef: React.RefObject<HTMLDivElement>
 }
 
@@ -178,6 +182,8 @@ export function ChatPanel({
   selectedProjectId,
   modelProfiles,
   selectedModel,
+  artifacts,
+  activeArtifactId,
   onProjectChange,
   onModelChange,
   onToolChange,
@@ -185,6 +191,8 @@ export function ChatPanel({
   onInputChange,
   onSend,
   onStop,
+  onOpenArtifact,
+  onExportArtifact,
   messagesEndRef,
 }: ChatPanelProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -240,6 +248,36 @@ export function ChatPanel({
   const selectableModels = Array.from(new Set(modelProfiles.flatMap((profile) => profile.models || [])))
 
   const showProcessPanel = isStreaming || traceEvents.length > 0 || processLogs.length > 0
+  const artifactMeta: Record<string, { icon: typeof Bot; label: string; exportLabel?: string }> = {
+    ppt: { icon: LayoutDashboard, label: 'PPT', exportLabel: '导出 PPTX' },
+    document: { icon: FileEdit, label: 'Markdown / 文档', exportLabel: '导出 DOCX' },
+    drawio: { icon: PenTool, label: 'draw.io 图表', exportLabel: '下载 draw.io' },
+    sheet: { icon: Sheet, label: 'Excel 表格', exportLabel: '导出 XLSX' },
+    image: { icon: ImageIcon, label: '图片结果' },
+    code: { icon: Terminal, label: '代码结果' },
+    mixed: { icon: Bot, label: '综合结果' },
+  }
+  const selectedArtifact = artifacts.find((artifact) => artifact.id === activeArtifactId) || artifacts[0] || null
+
+  const describeArtifact = (artifact: Artifact) => {
+    if (artifact.kind === 'ppt') {
+      return `共 ${(artifact.content?.slides || []).length || artifact.content?.slide_count || 0} 页幻灯片，支持右侧预览和 PPTX 导出。`
+    }
+    if (artifact.kind === 'document') return '结构化文档已生成，支持右侧阅读和 DOCX 导出。'
+    if (artifact.kind === 'drawio') return '图表已生成，支持右侧预览/编辑，也可以下载 draw.io 源文件。'
+    if (artifact.kind === 'sheet') return '表格数据已生成，支持右侧查看并导出为 Excel。'
+    if (artifact.kind === 'image') return '图像结果已生成，可在右侧查看详情。'
+    if (artifact.kind === 'code') return '代码结果已生成，可在右侧查看步骤与内容。'
+    return '综合产物已生成，可在右侧继续查看详细内容。'
+  }
+
+  const artifactExtension = (artifact: Artifact) => {
+    if (artifact.kind === 'ppt') return '.pptx'
+    if (artifact.kind === 'document') return '.docx'
+    if (artifact.kind === 'drawio') return '.drawio'
+    if (artifact.kind === 'sheet') return '.xlsx'
+    return '.file'
+  }
 
   return (
     <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
@@ -350,13 +388,103 @@ export function ChatPanel({
               )}
             </div>
           )}
+
+          {artifacts.length > 0 && (
+            <div className="rounded-[1.75rem] border border-black/[0.06] bg-white/72 p-4 shadow-[0_18px_50px_rgba(24,24,27,0.07)] backdrop-blur-xl">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="inline-flex items-center gap-2 text-sm font-semibold text-surface-950">
+                    <Files className="h-4 w-4 text-surface-700" />
+                    产物汇总
+                  </div>
+                  <div className="mt-0.5 text-xs text-surface-500">本次生成的文件与结果会沉淀在这里，支持预览和下载。</div>
+                </div>
+                <div className="rounded-full bg-surface-100 px-2.5 py-1 text-[11px] font-semibold text-surface-500">
+                  {artifacts.length} 个产物
+                </div>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {artifacts.map((artifact) => {
+                  const meta = artifactMeta[artifact.kind] || artifactMeta.mixed
+                  const ArtifactIcon = meta.icon
+                  const isActive = selectedArtifact?.id === artifact.id
+                  return (
+                    <button
+                      key={artifact.id}
+                      type="button"
+                      onClick={() => onOpenArtifact(artifact.id)}
+                      className={`group inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs transition-all ${
+                        isActive
+                          ? 'border-surface-900 bg-surface-950 text-white shadow-sm'
+                          : 'border-black/[0.07] bg-[#fbfaf7] text-surface-600 hover:bg-white hover:text-surface-900'
+                      }`}
+                    >
+                      <span className={`flex h-7 w-7 items-center justify-center rounded-full ${isActive ? 'bg-white/12 text-white' : 'bg-white text-surface-700 ring-1 ring-black/[0.05]'}`}>
+                        <ArtifactIcon className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="max-w-[180px] truncate text-left">
+                        {artifact.title || meta.label}
+                      </span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isActive ? 'bg-white/12 text-white/85' : 'bg-surface-100 text-surface-500'}`}>
+                        {artifactExtension(artifact)}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {selectedArtifact && (
+                <div className="mt-3 rounded-[1.4rem] border border-black/[0.06] bg-[#fcfbf8] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-surface-500 ring-1 ring-black/[0.05]">
+                          {(artifactMeta[selectedArtifact.kind] || artifactMeta.mixed).label}
+                        </div>
+                        <div className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                          {selectedArtifact.status === 'ready' ? '已生成' : selectedArtifact.status}
+                        </div>
+                      </div>
+                      <div className="mt-3 text-base font-semibold text-surface-950">
+                        {selectedArtifact.title || (artifactMeta[selectedArtifact.kind] || artifactMeta.mixed).label}
+                      </div>
+                      <div className="mt-1 text-sm leading-6 text-surface-500">
+                        {describeArtifact(selectedArtifact)}
+                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onOpenArtifact(selectedArtifact.id)}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-surface-950 px-3.5 py-2 text-xs font-semibold text-white hover:bg-surface-800"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        右侧预览
+                      </button>
+                      {(selectedArtifact.kind === 'ppt' || selectedArtifact.kind === 'document' || selectedArtifact.kind === 'sheet' || selectedArtifact.kind === 'drawio') && (
+                        <button
+                          type="button"
+                          onClick={() => onExportArtifact(selectedArtifact)}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white px-3.5 py-2 text-xs font-semibold text-surface-700 hover:bg-surface-50"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          {(artifactMeta[selectedArtifact.kind] || artifactMeta.mixed).exportLabel || '下载文件'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 z-20 px-5 pb-5 pt-12 bg-gradient-to-t from-[#f6f4ef] via-[#f6f4ef]/95 to-transparent">
+      <div className="absolute inset-x-0 bottom-0 z-20 px-5 pb-5 pt-6 bg-gradient-to-t from-[#f6f4ef] via-[#f6f4ef]/76 to-transparent">
         <div className="mx-auto w-full max-w-3xl">
-          <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1">
+          <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-2xl bg-[#f6f4ef]/72 px-2 py-1.5 backdrop-blur-sm">
             {AGENT_TOOLS.map((item) => (
               <button
                 key={item.id}
@@ -389,7 +517,7 @@ export function ChatPanel({
             </div>
           </div>
 
-          <div className={`rounded-[1.75rem] border bg-white/86 p-2 shadow-[0_24px_80px_rgba(24,24,27,0.18)] backdrop-blur-2xl transition-all ${
+          <div className={`rounded-[1.75rem] border bg-white/90 p-2 shadow-[0_10px_28px_rgba(24,24,27,0.10)] backdrop-blur-xl transition-all ${
             isStreaming ? 'border-surface-300 ring-4 ring-white/55' : 'border-black/10 focus-within:border-surface-500 focus-within:ring-4 focus-within:ring-white/70'
           }`}>
             <div className="mb-1 flex flex-wrap items-center justify-between gap-2 px-3 pt-1.5 text-[11px] text-surface-400">

@@ -8,6 +8,8 @@ use crate::error::AppError;
 use crate::models::{AppSettings, BasicSettings, LlmProfileConfig, McpServerConfig};
 use crate::state;
 
+const BUILTIN_MODELS: &[&str] = &["agnes-2.0-flash"];
+
 pub fn router() -> Router {
     Router::new()
         .route("/api/settings", get(get_settings).put(save_settings))
@@ -16,11 +18,17 @@ pub fn router() -> Router {
 
 fn default_settings() -> AppSettings {
     let cfg = crate::config::config();
+    let mut models = vec![cfg.llm_model.clone()];
+    for model in BUILTIN_MODELS {
+        if !models.iter().any(|item| item == model) {
+            models.push((*model).to_string());
+        }
+    }
     let default_profile = LlmProfileConfig {
         id: "default".into(),
         name: "默认模型服务".into(),
         base_url: cfg.llm_base_url.clone(),
-        models: vec![cfg.llm_model.clone()],
+        models,
         default_model: cfg.llm_model.clone(),
         api_key: None,
         has_api_key: !cfg.llm_api_key.is_empty(),
@@ -60,6 +68,11 @@ fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppError
             .map(|item| item.trim().to_string())
             .filter(|item| !item.is_empty())
             .collect();
+        for model in BUILTIN_MODELS {
+            if !profile.models.iter().any(|item| item == model) {
+                profile.models.push((*model).to_string());
+            }
+        }
         if profile.models.is_empty() {
             return Err(AppError::BadRequest(format!("模型服务「{}」至少需要一个模型", profile.name)));
         }

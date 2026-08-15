@@ -33,18 +33,37 @@ pub fn create(pool: &DbPool, title: &str, tool_kind: &str, owner_id: &str) -> Ap
     })
 }
 
-pub fn list_by_owner(pool: &DbPool, owner_id: &str) -> AppResult<Vec<ProjectRow>> {
+pub fn list_by_owner(pool: &DbPool, owner_id: &str, query: Option<&str>) -> AppResult<Vec<ProjectRow>> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let mut stmt = conn.prepare(
-        "SELECT id, title, description, tool_kind, owner_id, created_at, updated_at
-         FROM projects WHERE owner_id = ?1 ORDER BY updated_at DESC",
-    )?;
-    let rows = stmt.query_map(params![owner_id], |row| Ok(ProjectRow {
-        id: row.get(0)?, title: row.get(1)?, description: row.get(2)?, tool_kind: row.get(3)?,
-        owner_id: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?,
-    }))?;
+    let q = query.map(|item| format!("%{}%", item.trim())).filter(|item| item != "%%");
     let mut result = Vec::new();
-    for row in rows { result.push(row?); }
+    if let Some(ref qv) = q {
+        let mut stmt = conn.prepare(
+            "SELECT id, title, description, tool_kind, owner_id, created_at, updated_at
+             FROM projects
+             WHERE owner_id = ?1 AND (title LIKE ?2 OR COALESCE(description, '') LIKE ?2)
+             ORDER BY updated_at DESC"
+        )?;
+        let rows = stmt.query_map(params![owner_id, qv], |row| Ok(ProjectRow {
+            id: row.get(0)?, title: row.get(1)?, description: row.get(2)?, tool_kind: row.get(3)?,
+            owner_id: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?,
+        }))?;
+        for row in rows {
+            result.push(row?);
+        }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, title, description, tool_kind, owner_id, created_at, updated_at
+             FROM projects WHERE owner_id = ?1 ORDER BY updated_at DESC"
+        )?;
+        let rows = stmt.query_map(params![owner_id], |row| Ok(ProjectRow {
+            id: row.get(0)?, title: row.get(1)?, description: row.get(2)?, tool_kind: row.get(3)?,
+            owner_id: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?,
+        }))?;
+        for row in rows {
+            result.push(row?);
+        }
+    }
     Ok(result)
 }
 

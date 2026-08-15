@@ -72,6 +72,10 @@ function trimTitle(title?: string) {
   return (title || '未命名对话').replace(/\s+/g, ' ').trim()
 }
 
+function includesKeyword(value: string | undefined, keyword: string) {
+  return (value || '').toLowerCase().includes(keyword.toLowerCase())
+}
+
 export function ConversationSidebar({
   project,
   messages,
@@ -123,16 +127,28 @@ export function ConversationSidebar({
       } as ConversationRecord, ...conversations.filter((item) => item.id !== 'current')]
     : conversations
 
-  const { unassignedConversations, conversationsByProject } = useMemo(() => {
+  const { filteredProjects, unassignedConversations, conversationsByProject } = useMemo(() => {
+    const keyword = searchQuery.trim()
+    const filteredProjects = keyword
+      ? projects.filter((proj) => includesKeyword(proj.title, keyword) || includesKeyword(proj.description, keyword))
+      : projects
+    const filteredConversations = keyword
+      ? currentConversations.filter((item) =>
+          includesKeyword(item.title, keyword)
+          || includesKeyword(item.summary, keyword)
+          || includesKeyword(item.project_title, keyword)
+        )
+      : currentConversations
     const byProject = new Map<string, ConversationRecord[]>()
-    for (const proj of projects) {
-      byProject.set(proj.id, currentConversations.filter((c) => c.project_id === proj.id))
+    for (const proj of filteredProjects) {
+      byProject.set(proj.id, filteredConversations.filter((c) => c.project_id === proj.id))
     }
     return {
-      unassignedConversations: currentConversations.filter((c) => !c.project_id),
+      filteredProjects,
+      unassignedConversations: filteredConversations.filter((c) => !c.project_id),
       conversationsByProject: byProject,
     }
-  }, [projects, currentConversations])
+  }, [projects, currentConversations, searchQuery])
 
   const toggleProject = (id: string) => {
     setExpandedProjects((prev) => {
@@ -279,12 +295,12 @@ export function ConversationSidebar({
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
         <div className="mb-3 flex items-center justify-between px-1">
-          <span className="text-[10px] font-black uppercase tracking-[0.18em] text-surface-400">Projects</span>
-          <span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] font-bold text-surface-500">{projects.length}</span>
+          <span className="text-[10px] font-black uppercase tracking-[0.18em] text-surface-400">项目空间</span>
+          <span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] font-bold text-surface-500">{filteredProjects.length}</span>
         </div>
 
         <div className="space-y-2">
-          {projects.map((proj) => {
+          {filteredProjects.map((proj) => {
             const convs = conversationsByProject.get(proj.id) || []
             const isExpanded = expandedProjects.has(proj.id)
             const isActive = activeProjectId === proj.id
@@ -353,7 +369,7 @@ export function ConversationSidebar({
               onClick={() => setShowUnassigned(!showUnassigned)}
               className="mb-2 flex w-full items-center justify-between px-1"
             >
-              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-surface-400">Standalone</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-surface-400">独立对话</span>
               <span className="flex items-center gap-1.5 text-[10px] font-bold text-surface-500">
                 {unassignedConversations.length}
                 <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showUnassigned ? '' : '-rotate-90'}`} />
@@ -377,9 +393,9 @@ export function ConversationSidebar({
           </section>
         )}
 
-        {currentConversations.length === 0 && projects.length === 0 && (
+        {(currentConversations.length === 0 && filteredProjects.length === 0) && (
           <div className="rounded-[1.5rem] border border-dashed border-black/10 bg-white/58 px-4 py-8 text-center text-xs font-medium leading-relaxed text-surface-500">
-            暂无项目和对话。点击「新建项目」开始。
+            {searchQuery.trim() ? '没有匹配的项目或对话。试试换个关键词。' : '暂无项目和对话。点击「新建项目」开始。'}
           </div>
         )}
       </div>

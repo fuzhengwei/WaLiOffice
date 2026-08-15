@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
 import type { AppSettings, LLMProfile, MCPServiceConfig } from '@/types'
 
+const DEFAULT_MODELS = ['glm_for_coding', 'agnes-2.0-flash']
+
 interface SettingsDialogProps {
   open: boolean
   settings: AppSettings | null
@@ -15,7 +17,7 @@ const emptyProfile = (): LLMProfile => ({
   name: '新的模型服务',
   base_url: 'http://127.0.0.1:8777/v1',
   api_key: '',
-  models: ['glm_for_coding'],
+  models: DEFAULT_MODELS,
   default_model: 'glm_for_coding',
 })
 

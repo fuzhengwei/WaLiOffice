@@ -1,4 +1,5 @@
 use axum::extract::Path;
+use axum::extract::Query;
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -20,9 +21,14 @@ pub fn router() -> Router {
         .route("/api/ppt/project/:project_id/delete", post(delete_ppt_project))
 }
 
-async fn list_projects(user: AuthUser) -> Result<Json<serde_json::Value>, AppError> {
+#[derive(Deserialize)]
+struct ProjectListQuery {
+    q: Option<String>,
+}
+
+async fn list_projects(user: AuthUser, Query(query): Query<ProjectListQuery>) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let projects = project_repo::list_by_owner(&pool, &user.0.id)?;
+    let projects = project_repo::list_by_owner(&pool, &user.0.id, query.q.as_deref())?;
     Ok(Json(json!({ "projects": projects })))
 }
 
@@ -97,7 +103,7 @@ async fn get_project_sessions(user: AuthUser, Path(project_id): Path<String>) ->
     let pool = state::db_pool();
     let project = project_repo::find_by_id(&pool, &project_id, &user.0.id)?
         .ok_or(AppError::NotFound("项目不存在".into()))?;
-    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 100)?
+    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 100, None)?
         .into_iter()
         .filter(|item| item.project_id.as_deref() == Some(project.id.as_str()))
         .collect::<Vec<_>>();

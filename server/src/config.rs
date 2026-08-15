@@ -47,12 +47,12 @@ impl Config {
             llm_api_key,
             llm_model: env_or("AIPPT_LLM_MODEL", "gpt-5.5"),
             llm_provider: env_or("AIPPT_LLM_PROVIDER", "glm-gateway"),
-            llm_tool_timeout_ms: env_or("AIPPT_LLM_TOOL_TIMEOUT_MS", "600000")
+            llm_tool_timeout_ms: env_or("AIPPT_LLM_TOOL_TIMEOUT_MS", "1800000")
                 .parse()
-                .unwrap_or(600_000),
-            llm_chat_timeout_ms: env_or("AIPPT_LLM_CHAT_TIMEOUT_MS", "600000")
+                .unwrap_or(1_800_000),
+            llm_chat_timeout_ms: env_or("AIPPT_LLM_CHAT_TIMEOUT_MS", "1800000")
                 .parse()
-                .unwrap_or(600_000),
+                .unwrap_or(1_800_000),
 
             data_dir: env_or("AIPPT_DATA_DIR", "data"),
             projects_dir: env_or("AIPPT_PROJECTS_DIR", "data/projects"),

@@ -1,6 +1,8 @@
 use axum::extract::Path;
+use axum::extract::Query;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::error::AppError;
@@ -16,15 +18,20 @@ pub fn router() -> Router {
         .route("/api/chat/session/:session_id/clear", post(clear_session))
 }
 
-async fn list_sessions(user: AuthUser) -> Result<Json<serde_json::Value>, AppError> {
+#[derive(Deserialize)]
+struct SessionListQuery {
+    q: Option<String>,
+}
+
+async fn list_sessions(user: AuthUser, Query(query): Query<SessionListQuery>) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 50)?;
+    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 50, query.q.as_deref())?;
     Ok(Json(json!({ "sessions": sessions })))
 }
 
 async fn get_session(user: AuthUser, Path(session_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let session = session_repo::find_by_id(&pool, &session_id)?
+    let session = session_repo::get_session_detail(&pool, &session_id)?
         .ok_or(AppError::NotFound("会话不存在".into()))?;
     if session.owner_id != user.0.id {
         return Err(AppError::Forbidden);

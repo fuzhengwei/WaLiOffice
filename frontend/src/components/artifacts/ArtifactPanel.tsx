@@ -27,6 +27,7 @@ interface ArtifactPanelProps {
   onUpdateArtifact: (id: string, updates: Partial<Artifact>) => void
   onExportExcel: (artifact: Artifact) => void
   onExportDocx: (artifact: Artifact) => void
+  onExportDrawio: (artifact: Artifact) => void
 }
 
 function createFallbackDrawioXml(title = '综合 Agent 工作台流程') {
@@ -307,6 +308,7 @@ export function ArtifactPanel({
   onUpdateArtifact,
   onExportExcel,
   onExportDocx,
+  onExportDrawio,
 }: ArtifactPanelProps) {
   const [panelWidth, setPanelWidth] = useState(isWide ? 760 : 560)
   const draggingRef = useRef(false)
@@ -338,6 +340,7 @@ export function ArtifactPanel({
 
   const effectiveTool = activeArtifact?.tool_kind || activeTool
   const headerTitle = activeArtifact?.title || titleMap[effectiveTool] || '成果展示'
+  const canExportActiveArtifact = activeArtifact?.kind === 'document' || activeArtifact?.kind === 'sheet' || activeArtifact?.kind === 'drawio'
 
   return (
     <aside
@@ -371,6 +374,24 @@ export function ArtifactPanel({
               <button className="btn-secondary h-8 px-2.5 text-xs" disabled={!project} onClick={onPresent}>演示</button>
               <button className="btn-secondary h-8 px-2.5 text-xs" disabled={!project} onClick={onExportPpt}><Download className="h-3.5 w-3.5" />导出</button>
             </>
+          )}
+          {canExportActiveArtifact && activeArtifact?.kind === 'document' && (
+            <button className="btn-secondary h-8 px-2.5 text-xs" onClick={() => onExportDocx(activeArtifact)}>
+              <Download className="h-3.5 w-3.5" />
+              导出 DOCX
+            </button>
+          )}
+          {canExportActiveArtifact && activeArtifact?.kind === 'sheet' && (
+            <button className="btn-secondary h-8 px-2.5 text-xs" onClick={() => onExportExcel(activeArtifact)}>
+              <Download className="h-3.5 w-3.5" />
+              导出 XLSX
+            </button>
+          )}
+          {canExportActiveArtifact && activeArtifact?.kind === 'drawio' && (
+            <button className="btn-secondary h-8 px-2.5 text-xs" onClick={() => onExportDrawio(activeArtifact)}>
+              <Download className="h-3.5 w-3.5" />
+              下载 draw.io
+            </button>
           )}
           <button className="btn-ghost h-8 px-2" onClick={() => onWideChange(!isWide)} title="切换宽度">
             {isWide ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
