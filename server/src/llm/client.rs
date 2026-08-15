@@ -4,7 +4,7 @@ use std::time::Duration;
 use tracing::debug;
 
 use super::types::*;
-use crate::models::ChatMessage;
+use crate::models::{ChatAttachment, ChatMessage};
 
 pub struct LlmClient {
     http: Client,
@@ -85,14 +85,63 @@ impl LlmClient {
         messages: &[ChatMessage],
         tools: Option<&[FunctionDef]>,
     ) -> Result<ChatCompletionResponse> {
+        self.chat_with_attachments(messages, tools, None).await
+    }
+
+    pub async fn chat_with_attachments(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[FunctionDef]>,
+        user_attachments: Option<&[ChatAttachment]>,
+    ) -> Result<ChatCompletionResponse> {
         let req = ChatCompletionRequest {
             model: self.model.clone(),
-            messages: messages.to_vec(),
+            messages: build_request_messages(messages, user_attachments),
             tools: tools.map(|t| t.to_vec()),
             tool_choice: None,
             temperature: Some(0.7),
             stream: Some(false),
         };
+
+        let has_image_attachments = user_attachments
+            .map(|items| {
+                items.iter().any(|item| {
+                    item.kind == "image"
+                        && item
+                            .data_url
+                            .as_deref()
+                            .map(|value| !value.trim().is_empty())
+                            .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+
+        match self.send_chat_request(&req).await {
+            Ok(result) => Ok(result),
+            Err(err) if has_image_attachments => {
+                tracing::warn!("vision request failed, retrying text-only chat: {err}");
+                let mut fallback_messages = messages.to_vec();
+                fallback_messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: "当前模型或接口暂不支持图片视觉输入。不要假装已经看到了图片内容；请明确告知用户当前限制，并引导其补充图片中的文字、关键区域截图或切换到支持视觉的模型后重试。".to_string(),
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+                let fallback_req = ChatCompletionRequest {
+                    model: self.model.clone(),
+                    messages: build_request_messages(&fallback_messages, None),
+                    tools: tools.map(|t| t.to_vec()),
+                    tool_choice: None,
+                    temperature: Some(0.7),
+                    stream: Some(false),
+                };
+                self.send_chat_request(&fallback_req).await
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn send_chat_request(&self, req: &ChatCompletionRequest) -> Result<ChatCompletionResponse> {
 
         let url = format!("{}/chat/completions", self.base_url);
         debug!("LLM chat request to {url}");
@@ -103,7 +152,7 @@ impl LlmClient {
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .timeout(self.timeout)
-            .json(&req)
+            .json(req)
             .send()
             .await?;
 
@@ -148,4 +197,33 @@ impl LlmClient {
         }
         Err(anyhow!("模型未返回可解析 JSON"))
     }
+}
+
+fn build_request_messages(
+    messages: &[ChatMessage],
+    user_attachments: Option<&[ChatAttachment]>,
+) -> Vec<RequestMessage> {
+    let latest_user_index = user_attachments
+        .filter(|items| {
+            items.iter().any(|item| {
+                item.kind == "image"
+                    && item
+                        .data_url
+                        .as_deref()
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false)
+            })
+        })
+        .and_then(|_| messages.iter().rposition(|msg| msg.role == "user"));
+
+    messages
+        .iter()
+        .enumerate()
+        .map(|(index, msg)| match (Some(index) == latest_user_index, user_attachments) {
+            (true, Some(attachments)) => {
+                RequestMessage::from_multimodal_user_message(msg, attachments)
+            }
+            _ => RequestMessage::from_chat_message(msg),
+        })
+        .collect()
 }

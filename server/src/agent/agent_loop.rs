@@ -94,9 +94,11 @@ const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮�
 - Markdown/md/README/知识库/说明文档/操作手册/会议纪要/调研整理 → md_generate
 - excel/xlsx/表格/数据分析/排期/预算/数据指标 → sheet_generate
 - draw.io/流程图/架构图/泳道图/拓扑图/ER图 → drawio_generate
-- 图片/图像/海报/封面/logo/配图 → image_prompt
+- 只有当用户明确要“生成图片/做海报/做封面/logo/配图/主视觉/插画/出图”时，才调用 image_prompt
+- 如果用户上传了图片，并在问“这是什么”“帮我识别”“提取文字/OCR”“解释图片”“分析截图”“描述图里内容”等理解类问题，不要调用 image_prompt，优先直接结合视觉输入回答
 - 用户需要“最新”“官网”“新闻”“政策”“联网查询”“检索资料”“搜索一下”等外部信息时 → web_search
 - 当用户上传了 md/txt 附件时，要优先把附件正文视作本轮输入上下文，再决定是否继续调用工具
+- 当用户上传了图片附件时，如当前模型支持视觉输入，要直接结合图片内容进行识别、总结与生成
 - 用户说"做个XX"但未明确类型时，根据内容判断最合适的产物形式
 - 用户明确要求多个交付物时（例如“PPT + 流程图 + 文档”），要拆解成多个子任务，按顺序调用所有对应工具，不要只生成其中一种
 
@@ -111,8 +113,9 @@ const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮�
 8. 需要引用外部资料时，优先先调用 web_search，再基于搜索结果继续生成文档、PPT 或其他产物
 9. 工具执行完毕后，简洁总结结果给用户，并说明已经生成了哪些文件，以及每个产物适合怎样使用
 10. 如果调用了 web_search，回答中要基于搜索结果组织信息，不要假装亲自访问了不存在的页面
-11. 如果用户上传的是图片附件，而当前上下文只提供了图片元信息没有视觉识别结果，应明确说明这一点，并引导用户补充图片中的文字或关键内容
-12. 不要在文本中模拟工具调用结果
+11. 如果用户上传的是图片附件，要优先尝试直接结合图像理解用户需求；如果当前模型不支持视觉或识别结果不可靠，再明确说明限制，并引导用户补充图片中的文字或关键内容
+12. 对图片类请求先判断是“识图/读图”还是“生成图片”。识图问题直接回答，生成图片才调用 image_prompt
+13. 不要在文本中模拟工具调用结果
 额外要求：
 - 如果用户说“综合”“一起生成”“并且再来一个”“同时给我”，默认考虑多文件交付
 - 如果用户既要可视化说明又要汇报材料，优先同时生成 draw.io 和 PPT
@@ -131,6 +134,7 @@ const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮�
 pub async fn run_agent_loop(
     history: Vec<ChatMessage>,
     user_message: String,
+    user_attachments: Vec<crate::models::ChatAttachment>,
     ctx: ToolContext,
     config: AgentConfig,
     client: std::sync::Arc<crate::llm::LlmClient>,
@@ -183,7 +187,18 @@ pub async fn run_agent_loop(
 
         for turn in 0..max_turns {
             // 调用 LLM
-            let llm_response = match client.chat(&conversation, Some(&function_defs)).await {
+            let llm_response = match client
+                .chat_with_attachments(
+                    &conversation,
+                    Some(&function_defs),
+                    if user_attachments.is_empty() {
+                        None
+                    } else {
+                        Some(user_attachments.as_slice())
+                    },
+                )
+                .await
+            {
                 Ok(resp) => resp,
                 Err(e) => {
                     let _ = tx
@@ -355,7 +370,18 @@ pub async fn run_agent_loop(
             tool_call_id: None,
         });
 
-        match client.chat(&conversation, None).await {
+        match client
+            .chat_with_attachments(
+                &conversation,
+                None,
+                if user_attachments.is_empty() {
+                    None
+                } else {
+                    Some(user_attachments.as_slice())
+                },
+            )
+            .await
+        {
             Ok(resp) => {
                 let content = resp
                     .choices

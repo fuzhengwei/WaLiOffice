@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod db;
 mod error;
+mod image_ocr;
 mod llm;
 mod models;
 mod render;

@@ -1,9 +1,73 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestMessage {
+    pub role: String,
+    pub content: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+impl RequestMessage {
+    pub fn from_chat_message(msg: &crate::models::ChatMessage) -> Self {
+        Self {
+            role: msg.role.clone(),
+            content: Value::String(msg.content.clone()),
+            tool_calls: msg.tool_calls.clone(),
+            tool_call_id: msg.tool_call_id.clone(),
+        }
+    }
+
+    pub fn from_multimodal_user_message(
+        msg: &crate::models::ChatMessage,
+        attachments: &[crate::models::ChatAttachment],
+    ) -> Self {
+        let mut content = Vec::new();
+
+        if !msg.content.trim().is_empty() {
+            content.push(json!({
+                "type": "text",
+                "text": msg.content,
+            }));
+        }
+
+        for attachment in attachments.iter().filter(|item| {
+            item.kind == "image"
+                && item
+                    .data_url
+                    .as_deref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false)
+        }) {
+            content.push(json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": attachment.data_url.clone().unwrap_or_default(),
+                    "detail": "high",
+                }
+            }));
+        }
+
+        if content.is_empty() {
+            return Self::from_chat_message(msg);
+        }
+
+        Self {
+            role: msg.role.clone(),
+            content: Value::Array(content),
+            tool_calls: msg.tool_calls.clone(),
+            tool_call_id: msg.tool_call_id.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatCompletionRequest {
     pub model: String,
-    pub messages: Vec<crate::models::ChatMessage>,
+    pub messages: Vec<RequestMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<FunctionDef>>,
     #[serde(skip_serializing_if = "Option::is_none")]

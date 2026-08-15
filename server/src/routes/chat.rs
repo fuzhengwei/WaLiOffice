@@ -55,10 +55,11 @@ fn format_attachment_context(attachments: &[ChatAttachment]) -> String {
         return String::new();
     }
 
+    let mut image_attachment_count = 0usize;
     let sections = attachments
         .iter()
         .enumerate()
-        .map(|(index, attachment)| {
+        .filter_map(|(index, attachment)| {
             if attachment.kind == "text" {
                 let text = attachment
                     .text_content
@@ -77,22 +78,70 @@ fn format_attachment_context(attachments: &[ChatAttachment]) -> String {
                     attachment.size,
                     text
                 )
+                .into()
             } else {
-                format!(
-                    "附件 {}（图片）\n- 文件名：{}\n- MIME：{}\n- 大小：{} 字节\n- 说明：当前对话链路已接收到图片附件，但此版本主要将图片作为附件上下文与预览信息传递；如果用户需要精确识别图片内容，应引导用户补充图片文字说明或后续接入多模态模型。",
-                    index + 1,
-                    attachment.name,
-                    attachment.mime_type,
-                    attachment.size
-                )
+                image_attachment_count += 1;
+                let has_inline_image = attachment
+                    .data_url
+                    .as_deref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false);
+
+                if has_inline_image {
+                    let ocr_section = crate::image_ocr::extract_text_from_attachment(attachment)
+                        .ok()
+                        .flatten()
+                        .map(|text| text.chars().take(1_200).collect::<String>())
+                        .filter(|text| !text.trim().is_empty())
+                        .map(|text| format!(
+                            "附件 {}（图片）补充 OCR\n- 文件名：{}\n- OCR 提示开始\n{}\n- OCR 提示结束",
+                            index + 1,
+                            attachment.name,
+                            text
+                        ));
+
+                    ocr_section
+                } else {
+                    let ocr_text = crate::image_ocr::extract_text_from_attachment(attachment)
+                        .ok()
+                        .flatten()
+                        .map(|text| text.chars().take(8_000).collect::<String>());
+                    let ocr_section = ocr_text
+                        .map(|text| format!("\n- OCR 提取文字开始\n{}\n- OCR 提取文字结束", text))
+                        .unwrap_or_default();
+
+                    Some(
+                        format!(
+                            "附件 {}（图片）\n- 文件名：{}\n- MIME：{}\n- 大小：{} 字节\n- 说明：当前仅收到图片附件元信息，尚未附带可供模型识别的图片内容；如需精确识别，请补充图片中的文字说明。",
+                            index + 1,
+                            attachment.name,
+                            attachment.mime_type,
+                            attachment.size,
+                        ) + &ocr_section
+                    )
+                }
             }
         })
         .collect::<Vec<_>>()
         .join("\n\n");
 
+    let image_note = if image_attachment_count > 0 {
+        format!(
+            "用户本次还上传了 {} 张图片，图片数据已随本轮消息一并发送给模型。请优先直接结合图像内容回答，不要忽略图片，也不要要求用户重复上传。",
+            image_attachment_count
+        )
+    } else {
+        String::new()
+    };
+
     format!(
-        "用户本次还上传了 {} 个附件，请将它们视作本轮对话输入的一部分，并优先结合附件内容回答：\n\n{}",
+        "用户本次还上传了 {} 个附件，请将它们视作本轮对话输入的一部分，并优先结合附件内容回答。若用户这轮提问使用“这是什么”“这张图”“这里写了什么”“图里内容”等指代性表达，默认就是在询问这些附件，尤其是图片内容。{}\n\n{}",
         attachments.len(),
+        if image_note.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{}", image_note)
+        },
         sections
     )
 }
@@ -111,6 +160,23 @@ fn build_user_message(req: &ChatRequest) -> String {
         (false, false) => format!("{base}\n\n{attachment_context}"),
         (true, true) => String::new(),
     }
+}
+
+fn merge_session_artifacts(
+    existing: Vec<Artifact>,
+    current_turn: Vec<Artifact>,
+) -> Vec<Artifact> {
+    let mut merged = existing;
+
+    for artifact in current_turn {
+        if let Some(index) = merged.iter().position(|item| item.id == artifact.id) {
+            merged[index] = artifact;
+        } else {
+            merged.insert(0, artifact);
+        }
+    }
+
+    merged
 }
 
 async fn chat_stream(
@@ -150,6 +216,7 @@ async fn chat_stream(
 
     // 加载历史消息
     let history = session_repo::get_messages(&pool, &session_id, 50).unwrap_or_default();
+    let existing_artifacts = session_repo::get_artifacts(&pool, &session_id).unwrap_or_default();
 
     // 保存用户消息
     let user_msg = ChatMessage {
@@ -189,13 +256,14 @@ async fn chat_stream(
 
     let session_id_for_save = session_id.clone();
     let pool_for_save = pool.clone();
+    let existing_artifacts_for_save = existing_artifacts.clone();
     if let Some(attachments) = req.attachments.as_ref() {
         ctx.send(
             "state_update",
             serde_json::json!({
                 "phase": "running",
                 "step": "接收附件",
-                "detail": format!("已接收 {} 个附件（支持 md / txt / 图片）", attachments.len()),
+                "detail": format!("已接收 {} 个附件（支持 md / txt / 图片，图片将优先尝试视觉识别）", attachments.len()),
                 "attachment_count": attachments.len(),
                 "at": chrono::Utc::now().to_rfc3339(),
             }),
@@ -203,8 +271,15 @@ async fn chat_stream(
     }
 
     // 启动 agent 循环
-    let mut event_rx =
-        run_agent_loop(history, user_message, ctx, agent_config, client.clone()).await;
+    let mut event_rx = run_agent_loop(
+        history,
+        user_message,
+        req.attachments.clone().unwrap_or_default(),
+        ctx,
+        agent_config,
+        client.clone(),
+    )
+    .await;
     let requested_tool_kind = req.tool_kind.clone();
 
     tokio::spawn(async move {
@@ -239,10 +314,18 @@ async fn chat_stream(
                 }
                 AgentEvent::Artifact { artifact } => {
                     collected_artifacts.push(artifact.clone());
-                    let _ = session_repo::save_artifacts(&pool_for_save, &session_id_for_save, &collected_artifacts);
+                    let session_artifacts = merge_session_artifacts(
+                        existing_artifacts_for_save.clone(),
+                        collected_artifacts.clone(),
+                    );
+                    let _ = session_repo::save_artifacts(
+                        &pool_for_save,
+                        &session_id_for_save,
+                        &session_artifacts,
+                    );
                     Event::default().event("artifact_update").data(serde_json::json!({
                         "artifact": artifact,
-                        "artifacts": collected_artifacts,
+                        "artifacts": session_artifacts,
                         "session_id": session_id_for_save,
                         "tool_kind": artifact.tool_kind,
                     }).to_string())
@@ -268,20 +351,29 @@ async fn chat_stream(
                         collected_artifacts = artifacts.clone();
                     }
                     if collected_artifacts.is_empty()
-                        && (requested_tool_kind.as_deref() == Some("doc") || looks_like_markdown_document(&summary))
+                        && requested_tool_kind.as_deref() == Some("doc")
+                        && looks_like_markdown_document(&summary)
                     {
                         collected_artifacts.push(build_summary_markdown_artifact(&summary, requested_tool_kind.as_deref()));
                     }
+                    let session_artifacts = merge_session_artifacts(
+                        existing_artifacts_for_save.clone(),
+                        collected_artifacts.clone(),
+                    );
                     let _ = session_repo::update_summary(
                         &pool_for_save,
                         &session_id_for_save,
                         &summary.chars().take(240).collect::<String>(),
                     );
-                    let _ = session_repo::save_artifacts(&pool_for_save, &session_id_for_save, &collected_artifacts);
+                    let _ = session_repo::save_artifacts(
+                        &pool_for_save,
+                        &session_id_for_save,
+                        &session_artifacts,
+                    );
                     Event::default().event("done").data(serde_json::json!({
                         "session_id": session_id_for_save,
                         "summary": summary,
-                        "artifacts": collected_artifacts,
+                        "artifacts": session_artifacts,
                     }).to_string())
                 }
                 AgentEvent::Error { message } => {

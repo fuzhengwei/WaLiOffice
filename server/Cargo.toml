@@ -69,6 +69,7 @@ tokio-stream = "0.1"
 # Misc
 regex = "1"
 urlencoding = "2"
+base64 = "0.22"
 
 [profile.release]
 opt-level = 3

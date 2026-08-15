@@ -53,7 +53,10 @@ impl LlmStreamClient {
     ) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>> {
         let req = ChatCompletionRequest {
             model: self.model.clone(),
-            messages,
+            messages: messages
+                .iter()
+                .map(RequestMessage::from_chat_message)
+                .collect(),
             tools,
             tool_choice: None,
             temperature: Some(0.7),

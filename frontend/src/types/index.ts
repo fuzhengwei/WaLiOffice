@@ -11,6 +11,10 @@ export interface ChatAttachment {
   size: number;
   text_content?: string;
   data_url?: string;
+  original_size?: number;
+  width?: number;
+  height?: number;
+  compressed?: boolean;
 }
 
 export interface LLMProfile {
@@ -101,6 +105,7 @@ export interface PersistedSession {
     content: string;
     tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>;
     tool_call_id?: string;
+    created_at?: string;
   }>;
   artifacts?: Artifact[];
   project_id?: string;

@@ -16,7 +16,7 @@ function buildRestoredMessages(session: PersistedSession) {
     .map((msg) => ({
       role: msg.role as 'user' | 'assistant',
       content: msg.content,
-      timestamp: session.updated_at,
+      timestamp: msg.created_at || session.updated_at,
     }))
 
   const hasAssistant = restored.some((msg) => msg.role === 'assistant')
@@ -63,6 +63,36 @@ function buildHistoryProcessLogs(session: PersistedSession) {
   }
 
   return logs
+}
+
+const IMAGE_ATTACHMENT_MAX_EDGE = 1600
+const IMAGE_ATTACHMENT_TARGET_BYTES = 1.8 * 1024 * 1024
+
+function loadImageElement(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('加载图片失败'))
+    image.src = src
+  })
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob)
+      else reject(new Error('图片压缩失败'))
+    }, type, quality)
+  })
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error || new Error('图片转换失败'))
+    reader.readAsDataURL(blob)
+  })
 }
 
 export default function Studio() {
@@ -355,6 +385,88 @@ export default function Studio() {
       reader.readAsDataURL(file)
     })
 
+  const buildImageAttachment = async (file: File): Promise<ChatAttachment> => {
+    const originalDataUrl = await readFileAsDataUrl(file)
+
+    if (file.type === 'image/svg+xml' || file.type === 'image/gif') {
+      return {
+        id: `${Date.now()}-${crypto.randomUUID()}`,
+        name: file.name,
+        kind: 'image',
+        mime_type: file.type || 'image/png',
+        size: file.size,
+        data_url: originalDataUrl,
+        original_size: file.size,
+        compressed: false,
+      }
+    }
+
+    const image = await loadImageElement(originalDataUrl)
+    const scale = Math.min(1, IMAGE_ATTACHMENT_MAX_EDGE / Math.max(image.naturalWidth || 1, image.naturalHeight || 1))
+    const width = Math.max(1, Math.round((image.naturalWidth || 1) * scale))
+    const height = Math.max(1, Math.round((image.naturalHeight || 1) * scale))
+
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+
+    const context = canvas.getContext('2d')
+    if (!context) {
+      return {
+        id: `${Date.now()}-${crypto.randomUUID()}`,
+        name: file.name,
+        kind: 'image',
+        mime_type: file.type || 'image/png',
+        size: file.size,
+        data_url: originalDataUrl,
+        original_size: file.size,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        compressed: false,
+      }
+    }
+
+    const preferredMime = file.type === 'image/webp'
+      ? 'image/webp'
+      : file.type === 'image/png' && file.size <= IMAGE_ATTACHMENT_TARGET_BYTES
+        ? 'image/png'
+        : 'image/jpeg'
+
+    if (preferredMime === 'image/jpeg') {
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, width, height)
+    }
+    context.drawImage(image, 0, 0, width, height)
+
+    const qualities = preferredMime === 'image/png' ? [undefined] : [0.92, 0.86, 0.8, 0.72, 0.64]
+    let bestBlob: Blob | null = null
+
+    for (const quality of qualities) {
+      const blob = await canvasToBlob(canvas, preferredMime, quality)
+      if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob
+      if (blob.size <= IMAGE_ATTACHMENT_TARGET_BYTES) {
+        bestBlob = blob
+        break
+      }
+    }
+
+    const finalBlob = bestBlob || file
+    const finalDataUrl = finalBlob === file ? originalDataUrl : await blobToDataUrl(finalBlob)
+
+    return {
+      id: `${Date.now()}-${crypto.randomUUID()}`,
+      name: file.name,
+      kind: 'image',
+      mime_type: finalBlob.type || file.type || 'image/png',
+      size: finalBlob.size,
+      data_url: finalDataUrl,
+      original_size: file.size,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      compressed: finalBlob.size < file.size || scale < 1,
+    }
+  }
+
   const buildAttachmentFromFile = async (file: File): Promise<ChatAttachment | null> => {
     const lowerName = file.name.toLowerCase()
     const isMarkdown = lowerName.endsWith('.md') || file.type === 'text/markdown'
@@ -374,15 +486,7 @@ export default function Studio() {
     }
 
     if (isImage) {
-      const dataUrl = await readFileAsDataUrl(file)
-      return {
-        id: `${Date.now()}-${crypto.randomUUID()}`,
-        name: file.name,
-        kind: 'image',
-        mime_type: file.type || 'image/png',
-        size: file.size,
-        data_url: dataUrl,
-      }
+      return buildImageAttachment(file)
     }
 
     return null
@@ -484,16 +588,21 @@ export default function Studio() {
     }
   }
 
-  const inferToolFromMessage = (text: string): ToolKind => {
+  const inferToolFromMessage = (text: string, pendingAttachments: ChatAttachment[] = []): ToolKind => {
     const lower = text.toLowerCase()
     const hits: ToolKind[] = []
+    const hasImageAttachment = pendingAttachments.some((item) => item.kind === 'image')
+    const hasImageRecognitionIntent = /这是什么|识别|识图|看图|帮我看看|图里|图片里|截图里|读图|ocr|提取文字|解析图片|说明图片|分析图片|描述图片/.test(lower)
+    const hasImageGenerationIntent = /生成.*图|做.*图|画.*图|出图|海报|封面|logo|配图|主视觉|插画|banner|视觉稿|图像创作/.test(lower)
+
     if (/draw\.io|drawio|流程图|架构图|泳道图|拓扑图|er图/.test(lower)) hits.push('drawio')
     if (/excel|xlsx|表格|数据分析|公式|在线表/.test(lower)) hits.push('excel')
     if (/文档|报告|prd|方案|纪要|文章|docx|markdown|readme|知识库|说明文档|操作手册|md\b/.test(lower)) hits.push('doc')
     if (/ppt|演示文稿|幻灯片|presentation|做个.*汇报|生成.*汇报|制作.*汇报|汇报材料/.test(lower)) hits.push('ppt')
-    if (/图片|图像|海报|封面|logo|配图/.test(lower)) hits.push('image')
+    if (hasImageGenerationIntent || (/图片|图像/.test(lower) && !hasImageRecognitionIntent && !hasImageAttachment)) hits.push('image')
     const wantsMultiple = /同时|一起|并且|再来|外加|附上|配一张|再补一个|多个|一套/.test(lower)
     const uniqueHits = Array.from(new Set(hits))
+    if (hasImageAttachment && !hasImageGenerationIntent) return 'general'
     if (uniqueHits.length > 1 || (wantsMultiple && uniqueHits.length > 0)) return 'general'
     if (uniqueHits.length === 1) return uniqueHits[0]
     return activeTool
@@ -502,9 +611,10 @@ export default function Studio() {
   const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || isStreaming) return
 
-    const message = input.trim() || '请结合我上传的文件内容继续处理。'
+    const hasImageAttachment = attachments.some((item) => item.kind === 'image')
+    const message = input.trim() || (hasImageAttachment ? '请识别并说明我上传图片的主要内容。' : '请结合我上传的文件内容继续处理。')
     const pendingAttachments = attachments
-    const inferredTool = inferToolFromMessage(message)
+    const inferredTool = inferToolFromMessage(message, pendingAttachments)
     if (inferredTool !== activeTool) setActiveTool(inferredTool)
     setInput('')
     setAttachments([])
@@ -680,7 +790,7 @@ export default function Studio() {
 
             case 'done':
               setStreamPhase('done')
-              setStreamStatus('生成完成')
+              setStreamStatus(Array.isArray(data.artifacts) && data.artifacts.length > 0 ? '生成完成' : '回复完成')
               if (data.session_id) setSessionId(data.session_id)
               if (Array.isArray(data.artifacts)) {
                 data.artifacts.forEach((artifact: Artifact) => upsertArtifact(artifact))
@@ -1035,6 +1145,7 @@ export default function Studio() {
             onSelectSlide={handleSelectSlide}
             onExportPpt={handleExport}
             onPresent={() => setShowPresent(true)}
+            messages={messages}
             pptProgress={pptProgress}
             isGeneratingPpt={isStreaming && activeTool === 'ppt'}
             activeArtifact={activeArtifact}

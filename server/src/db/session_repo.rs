@@ -1,6 +1,6 @@
 use super::DbPool;
 use crate::error::AppResult;
-use crate::models::{Artifact, ChatMessage};
+use crate::models::{Artifact, ChatMessage, PersistedChatMessage};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +28,7 @@ pub struct SessionDetail {
     pub message_count: i64,
     pub created_at: String,
     pub updated_at: String,
-    pub messages: Vec<ChatMessage>,
+    pub messages: Vec<PersistedChatMessage>,
     pub artifacts: Vec<Artifact>,
 }
 
@@ -188,7 +188,7 @@ pub fn get_session_detail(pool: &DbPool, session_id: &str) -> AppResult<Option<S
         Some(session) => session,
         None => return Ok(None),
     };
-    let messages = get_messages(pool, session_id, 100)?;
+    let messages = get_persisted_messages(pool, session_id, 100)?;
     let artifacts = get_artifacts(pool, session_id)?;
     Ok(Some(SessionDetail {
         id: session.id,
@@ -245,6 +245,38 @@ pub fn get_messages(pool: &DbPool, session_id: &str, limit: i64) -> AppResult<Ve
             content,
             tool_calls,
             tool_call_id,
+        })
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+pub fn get_persisted_messages(
+    pool: &DbPool,
+    session_id: &str,
+    limit: i64,
+) -> AppResult<Vec<PersistedChatMessage>> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let mut stmt = conn.prepare(
+        "SELECT role, content, tool_input, tool_output, created_at FROM messages
+         WHERE session_id = ?1 ORDER BY created_at ASC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![session_id, limit], |row| {
+        let role: String = row.get(0)?;
+        let content: String = row.get(1)?;
+        let tool_input: Option<String> = row.get(2)?;
+        let tool_output: Option<String> = row.get(3)?;
+        let created_at: String = row.get(4)?;
+        let tool_calls = tool_input.and_then(|s| serde_json::from_str(&s).ok());
+        Ok(PersistedChatMessage {
+            role,
+            content,
+            tool_calls,
+            tool_call_id: tool_output,
+            created_at,
         })
     })?;
     let mut result = Vec::new();

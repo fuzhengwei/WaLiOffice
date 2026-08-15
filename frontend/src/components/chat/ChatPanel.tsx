@@ -1,7 +1,8 @@
-import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Palette, Send, Sparkles, Square, Wand2, ChevronRight, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X } from 'lucide-react'
+import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Palette, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X } from 'lucide-react'
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
-import { useRef, useState, useEffect, Fragment } from 'react'
+import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
 import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, LLMProfile, PPTProject, ToolKind } from '@/types'
+import { findArtifactTurnGroup, groupArtifactsByTurn } from '@/lib/artifact-turns'
 
 interface ChatPanelProps {
   messages: ChatMessage[]
@@ -103,8 +104,81 @@ function renderMarkdown(content: string) {
   return nodes
 }
 
+function formatAttachmentSize(size?: number) {
+  const value = size || 0
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  return `${Math.max(1, Math.round(value / 1024))} KB`
+}
+
+function AttachmentPreview({
+  attachment,
+  tone = 'light',
+  onRemove,
+}: {
+  attachment: ChatAttachment
+  tone?: 'light' | 'dark'
+  onRemove?: (id: string) => void
+}) {
+  const isImage = attachment.kind === 'image' && attachment.data_url
+  const dark = tone === 'dark'
+  const shellClass = dark
+    ? 'border-white/12 bg-white/10 text-white'
+    : 'border-black/8 bg-[#f8f5ee] text-surface-700'
+  const metaClass = dark ? 'text-white/65' : 'text-surface-400'
+
+  if (isImage) {
+    return (
+      <div className={`group relative w-[168px] overflow-hidden rounded-2xl border ${shellClass}`}>
+        <img
+          src={attachment.data_url}
+          alt={attachment.name}
+          className="h-28 w-full object-cover"
+        />
+        <div className="space-y-1 px-3 py-2">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium">
+            <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{attachment.name}</span>
+          </div>
+          <div className={`text-[10px] ${metaClass}`}>
+            {formatAttachmentSize(attachment.size)}
+            {attachment.compressed ? ' · 已压缩' : ''}
+          </div>
+        </div>
+        {onRemove && (
+          <button
+            type="button"
+            onClick={() => onRemove(attachment.id)}
+            className="absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition group-hover:opacity-100"
+            title="移除图片"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className={`inline-flex max-w-full items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] ${shellClass}`}>
+      <FileEdit className={`h-3.5 w-3.5 ${dark ? 'text-white/80' : 'text-emerald-600'}`} />
+      <span className="max-w-[180px] truncate">{attachment.name}</span>
+      <span className={metaClass}>{formatAttachmentSize(attachment.size)}</span>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={() => onRemove(attachment.id)}
+          className={`rounded-full p-0.5 ${dark ? 'hover:bg-white/10' : 'hover:bg-white'} ${metaClass}`}
+          title="移除附件"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 const toolDot: Record<ToolKind, string> = {
-  general: 'bg-zinc-900',
+  general: 'bg-sky-400',
   ppt: 'bg-blue-500',
   doc: 'bg-emerald-500',
   drawio: 'bg-violet-500',
@@ -228,7 +302,7 @@ export function ChatPanel({
     onInputChange(e.target.value)
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 148)}px`
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 196)}px`
     }
   }
 
@@ -249,7 +323,7 @@ export function ChatPanel({
   const phaseConfig = [
     { key: 'thinking', label: '分析', icon: Brain, desc: '理解需求' },
     { key: 'generating', label: '决策', icon: Wrench, desc: '调用工具' },
-    { key: 'finishing', label: '绘制', icon: FileEdit, desc: '生成产物' },
+    { key: 'finishing', label: activeTool === 'general' ? '回复' : '绘制', icon: FileEdit, desc: activeTool === 'general' ? '整理回复' : '生成产物' },
   ] as const
   const currentPhaseIndex = streamPhase === 'thinking' ? 0 : streamPhase === 'generating' ? 1 : streamPhase === 'finishing' || streamPhase === 'done' ? 2 : -1
 
@@ -268,6 +342,20 @@ export function ChatPanel({
     mixed: { icon: Bot, label: '综合结果' },
   }
   const selectedArtifact = artifacts.find((artifact) => artifact.id === activeArtifactId) || artifacts[0] || null
+  const artifactTurnGroups = useMemo(() => groupArtifactsByTurn(artifacts, messages), [artifacts, messages])
+  const selectedArtifactTurn = findArtifactTurnGroup(selectedArtifact?.id || null, artifactTurnGroups)
+  const [expandedTurnKeys, setExpandedTurnKeys] = useState<string[]>([])
+  const canSend = input.trim().length > 0 || attachments.length > 0
+
+  useEffect(() => {
+    setExpandedTurnKeys((current) => {
+      const validKeys = current.filter((key) => artifactTurnGroups.some((group) => group.key === key))
+      const next = new Set(validKeys)
+      if (artifactTurnGroups[0]) next.add(artifactTurnGroups[0].key)
+      if (selectedArtifactTurn) next.add(selectedArtifactTurn.key)
+      return Array.from(next)
+    })
+  }, [artifactTurnGroups, selectedArtifactTurn?.key])
 
   const describeArtifact = (artifact: Artifact) => {
     if (artifact.kind === 'ppt') {
@@ -296,7 +384,7 @@ export function ChatPanel({
     <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-[#f6f4ef] via-[#f6f4ef]/90 to-transparent" />
 
-      <div className="relative z-0 flex-1 overflow-y-auto px-5 pb-52 pt-8">
+      <div className="relative z-0 flex-1 overflow-y-auto px-5 pb-8 pt-8">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
           {messages.length === 0 && (
             <div className="flex min-h-[48vh] flex-col items-center justify-center text-center">
@@ -342,15 +430,11 @@ export function ChatPanel({
                 {msg.attachments && msg.attachments.length > 0 && (
                   <div className={`mt-3 flex flex-wrap gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     {msg.attachments.map((attachment) => (
-                      <div
+                      <AttachmentPreview
                         key={attachment.id}
-                        className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] ${
-                          msg.role === 'user' ? 'bg-white/12 text-white/90' : 'bg-surface-100 text-surface-600'
-                        }`}
-                      >
-                        {attachment.kind === 'image' ? <ImageIcon className="h-3.5 w-3.5" /> : <FileEdit className="h-3.5 w-3.5" />}
-                        <span className="max-w-[180px] truncate">{attachment.name}</span>
-                      </div>
+                        attachment={attachment}
+                        tone={msg.role === 'user' ? 'dark' : 'light'}
+                      />
                     ))}
                   </div>
                 )}
@@ -425,38 +509,75 @@ export function ChatPanel({
                     <Files className="h-4 w-4 text-surface-700" />
                     产物汇总
                   </div>
-                  <div className="mt-0.5 text-xs text-surface-500">本次生成的文件与结果会沉淀在这里，支持预览和下载。</div>
+                  <div className="mt-0.5 text-xs text-surface-500">同一会话里生成过的文件与结果会累计沉淀在这里，继续追问时也可以随时回看、预览和下载。</div>
                 </div>
                 <div className="rounded-full bg-surface-100 px-2.5 py-1 text-[11px] font-semibold text-surface-500">
-                  {artifacts.length} 个产物
+                  累计 {artifacts.length} 个产物 · {artifactTurnGroups.length} 轮
                 </div>
               </div>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {artifacts.map((artifact) => {
-                  const meta = artifactMeta[artifact.kind] || artifactMeta.mixed
-                  const ArtifactIcon = meta.icon
-                  const isActive = selectedArtifact?.id === artifact.id
+              <div className="space-y-3">
+                {artifactTurnGroups.map((group) => {
+                  const expanded = expandedTurnKeys.includes(group.key)
                   return (
-                    <button
-                      key={artifact.id}
-                      type="button"
-                      onClick={() => onOpenArtifact(artifact.id)}
-                      className={`group inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs transition-all ${
-                        isActive
-                          ? 'border-surface-900 bg-surface-950 text-white shadow-sm'
-                          : 'border-black/[0.07] bg-[#fbfaf7] text-surface-600 hover:bg-white hover:text-surface-900'
-                      }`}
-                    >
-                      <span className={`flex h-7 w-7 items-center justify-center rounded-full ${isActive ? 'bg-white/12 text-white' : 'bg-white text-surface-700 ring-1 ring-black/[0.05]'}`}>
-                        <ArtifactIcon className="h-3.5 w-3.5" />
-                      </span>
-                      <span className="max-w-[180px] truncate text-left">
-                        {artifact.title || meta.label}
-                      </span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isActive ? 'bg-white/12 text-white/85' : 'bg-surface-100 text-surface-500'}`}>
-                        {artifactExtension(artifact)}
-                      </span>
-                    </button>
+                    <div key={group.key} className="overflow-hidden rounded-[1.35rem] border border-black/[0.05] bg-[#fcfbf8]">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedTurnKeys((current) => current.includes(group.key) ? current.filter((key) => key !== group.key) : [...current, group.key])}
+                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="rounded-full bg-surface-950 px-2.5 py-1 text-[11px] font-semibold text-white">
+                              {group.title}
+                            </div>
+                            <div className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-surface-500 ring-1 ring-black/[0.05]">
+                              {group.timeLabel}
+                            </div>
+                          </div>
+                          <div className="mt-1 text-xs text-surface-500">这一轮共生成 {group.artifacts.length} 个产物，支持继续回看和右侧预览。</div>
+                        </div>
+                        <div className="flex items-center gap-2 text-surface-400">
+                          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-surface-500 ring-1 ring-black/[0.05]">
+                            {group.artifacts.length} 个
+                          </span>
+                          <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                        </div>
+                      </button>
+
+                      {expanded && (
+                        <div className="border-t border-black/[0.04] px-4 py-3">
+                          <div className="flex gap-2 overflow-x-auto pb-1">
+                            {group.artifacts.map((artifact) => {
+                              const meta = artifactMeta[artifact.kind] || artifactMeta.mixed
+                              const ArtifactIcon = meta.icon
+                              const isActive = selectedArtifact?.id === artifact.id
+                              return (
+                                <button
+                                  key={artifact.id}
+                                  type="button"
+                                  onClick={() => onOpenArtifact(artifact.id)}
+                                  className={`group inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs transition-all ${
+                                    isActive
+                                      ? 'border-surface-900 bg-surface-950 text-white shadow-sm'
+                                      : 'border-black/[0.07] bg-white text-surface-600 hover:bg-white hover:text-surface-900'
+                                  }`}
+                                >
+                                  <span className={`flex h-7 w-7 items-center justify-center rounded-full ${isActive ? 'bg-white/12 text-white' : 'bg-surface-50 text-surface-700 ring-1 ring-black/[0.05]'}`}>
+                                    <ArtifactIcon className="h-3.5 w-3.5" />
+                                  </span>
+                                  <span className="max-w-[180px] truncate text-left">
+                                    {artifact.title || meta.label}
+                                  </span>
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isActive ? 'bg-white/12 text-white/85' : 'bg-surface-100 text-surface-500'}`}>
+                                    {artifactExtension(artifact)}
+                                  </span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )
                 })}
               </div>
@@ -466,6 +587,11 @@ export function ChatPanel({
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
+                        {selectedArtifactTurn && (
+                          <div className="rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700">
+                            {selectedArtifactTurn.title}
+                          </div>
+                        )}
                         <div className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-surface-500 ring-1 ring-black/[0.05]">
                           {(artifactMeta[selectedArtifact.kind] || artifactMeta.mixed).label}
                         </div>
@@ -510,9 +636,122 @@ export function ChatPanel({
         </div>
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 z-20 px-5 pb-5 pt-6 bg-gradient-to-t from-[#f6f4ef] via-[#f6f4ef]/76 to-transparent">
+      <div className="relative z-20 shrink-0 bg-[#f6f4ef]/88 px-5 pb-4 pt-3 backdrop-blur-xl">
         <div className="mx-auto w-full max-w-3xl">
-          <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-2xl bg-[#f6f4ef]/72 px-2 py-1.5 backdrop-blur-sm">
+          <div className={`rounded-[2rem] border bg-white/90 p-2.5 shadow-[0_14px_36px_rgba(24,24,27,0.09)] backdrop-blur-xl transition-all ${
+            isStreaming ? 'border-surface-300 ring-4 ring-white/55' : 'border-black/10 focus-within:border-surface-500 focus-within:ring-4 focus-within:ring-white/70'
+          }`}>
+            {attachments.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2 px-1">
+                {attachments.map((attachment) => (
+                  <AttachmentPreview
+                    key={attachment.id}
+                    attachment={attachment}
+                    onRemove={isStreaming ? undefined : onRemoveAttachment}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="rounded-[1.55rem] border border-black/[0.05] bg-[#fcfbf8]/96 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+              <div className="min-h-[90px]">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={handleInput}
+                  onKeyDown={handleKeyDown}
+                  onCompositionStart={handleCompositionStart}
+                  onCompositionEnd={handleCompositionEnd}
+                  placeholder={isStreaming ? '正在执行中，可点击停止...' : tool.promptPlaceholder}
+                  rows={2}
+                  disabled={isStreaming}
+                  className="min-h-[72px] max-h-[180px] w-full resize-none border-0 bg-transparent p-0 text-[15px] leading-[1.7] text-surface-900 outline-none placeholder:text-surface-400 disabled:text-surface-400"
+                />
+              </div>
+
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                  {isStreaming && (
+                    <span className="inline-flex h-8 items-center rounded-full bg-white/80 px-2.5 text-[11px] font-medium text-surface-500 ring-1 ring-black/[0.04]">
+                      {streamStatus}
+                    </span>
+                  )}
+                  {artifacts.length > 0 && !isStreaming && (
+                    <span className="inline-flex h-8 items-center rounded-full bg-white/68 px-2.5 text-[11px] font-medium text-surface-500 ring-1 ring-black/[0.04]">
+                      {artifacts.length} 个产物 · {artifactTurnGroups.length} 轮
+                    </span>
+                  )}
+                  {selectedArtifact && !isStreaming && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenArtifact(selectedArtifact.id)}
+                      className="inline-flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-[11px] font-semibold text-surface-800 ring-1 ring-black/[0.06] shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all hover:-translate-y-[0.5px] hover:bg-white hover:text-surface-950 hover:shadow-[0_3px_10px_rgba(15,23,42,0.08)]"
+                    >
+                      <Eye className="h-3 w-3" />
+                      查看当前产物
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {isStreaming ? (
+                    <button
+                      onClick={onStop}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-full bg-red-50 px-3 text-xs font-medium text-red-600 transition-colors hover:bg-red-100"
+                      title="停止生成"
+                    >
+                      <Square className="h-3.5 w-3.5 fill-current" />
+                      停止
+                    </button>
+                  ) : (
+                    <>
+                      <div className="relative">
+                        <select
+                          value={selectedProjectId || ''}
+                          onChange={(event) => onProjectChange(event.target.value || null)}
+                          disabled={isStreaming}
+                          className="h-8 max-w-[132px] appearance-none rounded-full border border-black/[0.05] bg-white/90 px-3 pr-8 text-[11px] text-surface-600 outline-none transition-all hover:border-black/[0.08] hover:bg-white disabled:opacity-50"
+                        >
+                          <option value="">未选择项目</option>
+                          {projects.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-surface-400" />
+                      </div>
+                      <div className="relative">
+                        <select
+                          value={selectedModel}
+                          onChange={(event) => onModelChange(event.target.value)}
+                          disabled={isStreaming}
+                          className="h-8 max-w-[142px] appearance-none rounded-full border border-black/[0.05] bg-white/90 px-3 pr-8 text-[11px] text-surface-600 outline-none transition-all hover:border-black/[0.08] hover:bg-white disabled:opacity-50"
+                        >
+                          {(selectableModels.length ? selectableModels : [selectedModel]).map((model) => <option key={model} value={model}>{model}</option>)}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-surface-400" />
+                      </div>
+                      <div className="inline-flex items-center gap-1 rounded-full border border-black/[0.06] bg-[#fbfaf7] p-[3px] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_3px_rgba(15,23,42,0.05)]">
+                        <button
+                          type="button"
+                          onClick={onPickAttachments}
+                          className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-full text-surface-500 transition-all hover:bg-white hover:text-surface-900"
+                          title="上传文件"
+                        >
+                          <Paperclip className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={onSend}
+                          disabled={!canSend}
+                          className="inline-flex h-[30px] items-center gap-1.5 rounded-full bg-surface-950 px-3 text-[11px] font-semibold text-white shadow-[0_1px_2px_rgba(15,23,42,0.18)] transition-all hover:-translate-y-[0.5px] hover:bg-surface-900 hover:shadow-[0_4px_12px_rgba(15,23,42,0.18)] disabled:translate-y-0 disabled:bg-surface-200 disabled:text-surface-400 disabled:shadow-none"
+                          title="发送"
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          发送
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-[1.45rem] border border-black/[0.05] bg-[#f8f5ee]/86 px-2 py-2 backdrop-blur-sm">
             {AGENT_TOOLS.map((item) => (
               <button
                 key={item.id}
@@ -529,7 +768,7 @@ export function ChatPanel({
                 {item.shortName}
               </button>
             ))}
-            <div className="ml-auto hidden items-center gap-1.5 text-[11px] text-surface-400 sm:flex">
+            <div className="ml-auto flex flex-wrap items-center gap-1.5 text-[11px] text-surface-400">
               <Palette className="h-3.5 w-3.5" />
               {themes.map((theme) => (
                 <button
@@ -544,91 +783,6 @@ export function ChatPanel({
               ))}
             </div>
           </div>
-
-          <div className={`rounded-[1.75rem] border bg-white/90 p-2 shadow-[0_10px_28px_rgba(24,24,27,0.10)] backdrop-blur-xl transition-all ${
-            isStreaming ? 'border-surface-300 ring-4 ring-white/55' : 'border-black/10 focus-within:border-surface-500 focus-within:ring-4 focus-within:ring-white/70'
-          }`}>
-            <div className="mb-1 flex flex-wrap items-center justify-between gap-2 px-3 pt-1.5 text-[11px] text-surface-400">
-              <span className="inline-flex items-center gap-1.5"><Wand2 className="h-3.5 w-3.5" /> 当前工具：{tool.name}</span>
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={selectedProjectId || ''}
-                  onChange={(event) => onProjectChange(event.target.value || null)}
-                  disabled={isStreaming}
-                  className="max-w-[170px] rounded-full border border-black/5 bg-white/80 px-2 py-1 text-[11px] text-surface-600 outline-none disabled:opacity-50"
-                >
-                  <option value="">未选择项目</option>
-                  {projects.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
-                </select>
-                <select
-                  value={selectedModel}
-                  onChange={(event) => onModelChange(event.target.value)}
-                  disabled={isStreaming}
-                  className="max-w-[160px] rounded-full border border-black/5 bg-white/80 px-2 py-1 text-[11px] text-surface-600 outline-none disabled:opacity-50"
-                >
-                  {(selectableModels.length ? selectableModels : [selectedModel]).map((model) => <option key={model} value={model}>{model}</option>)}
-                </select>
-                <span>{isStreaming ? streamStatus : 'Enter 发送 · Shift+Enter 换行'}</span>
-              </div>
-            </div>
-            {attachments.length > 0 && (
-              <div className="mb-1 flex flex-wrap gap-2 px-3">
-                {attachments.map((attachment) => (
-                  <div key={attachment.id} className="inline-flex max-w-full items-center gap-2 rounded-full border border-black/8 bg-[#f8f5ee] px-3 py-1.5 text-[11px] text-surface-600">
-                    {attachment.kind === 'image' ? <ImageIcon className="h-3.5 w-3.5 text-violet-500" /> : <FileEdit className="h-3.5 w-3.5 text-emerald-600" />}
-                    <span className="max-w-[180px] truncate">{attachment.name}</span>
-                    <span className="text-surface-400">{Math.max(1, Math.round((attachment.size || 0) / 1024))} KB</span>
-                    {!isStreaming && (
-                      <button type="button" onClick={() => onRemoveAttachment(attachment.id)} className="rounded-full p-0.5 text-surface-400 hover:bg-white hover:text-surface-700">
-                        <X className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex items-end gap-2">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={handleInput}
-                onKeyDown={handleKeyDown}
-                onCompositionStart={handleCompositionStart}
-                onCompositionEnd={handleCompositionEnd}
-                placeholder={isStreaming ? '正在执行中，可点击停止...' : tool.promptPlaceholder}
-                rows={1}
-                disabled={isStreaming}
-                className="min-h-[52px] max-h-[148px] flex-1 resize-none border-0 bg-transparent px-3 py-3 text-[15px] leading-6 text-surface-900 outline-none placeholder:text-surface-400 disabled:text-surface-400"
-              />
-              {isStreaming ? (
-                <button
-                  onClick={onStop}
-                  className="mb-1 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-red-50 text-red-600 transition-colors hover:bg-red-100"
-                  title="停止生成"
-                >
-                  <Square className="h-4 w-4 fill-current" />
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={onPickAttachments}
-                    className="mb-1 inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-black/8 bg-[#f8f5ee] text-surface-700 transition-all hover:-translate-y-0.5 hover:bg-white"
-                    title="上传文件"
-                  >
-                    <Paperclip className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={onSend}
-                    disabled={!input.trim() && attachments.length === 0}
-                    className="mb-1 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-950 text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-surface-800 disabled:translate-y-0 disabled:bg-surface-200 disabled:text-surface-400"
-                    title="发送"
-                  >
-                    <Send className="h-4 w-4" />
-                  </button>
-                </>
-              )}
-            </div>
           </div>
         </div>
       </div>
