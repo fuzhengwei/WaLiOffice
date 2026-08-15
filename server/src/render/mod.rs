@@ -1,4 +1,5 @@
 pub mod docx_render;
+pub mod pptx_render;
 pub mod xlsx_render;
 
 use std::path::PathBuf;

@@ -29,3 +29,4 @@ Thumbs.db
 
 # Cargo lock (保留二进制项目的 lock)
 # server/Cargo.lock
+/.local-config

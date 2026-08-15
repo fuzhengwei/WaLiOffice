@@ -49,7 +49,7 @@ fn default_settings() -> AppSettings {
         basic: BasicSettings {
             app_name: cfg.app_name.clone(),
             workspace_title: "智能办公助手".into(),
-            brand_tagline: "直接开始创作，而不是先进入后台".into(),
+            brand_tagline: "打开即用，专注办公创作".into(),
             default_theme: "default".into(),
         },
         mcp_servers: builtin_mcp_servers(),
@@ -167,7 +167,7 @@ fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppError
         settings.basic.workspace_title = "智能办公助手".into();
     }
     if settings.basic.brand_tagline.trim().is_empty() {
-        settings.basic.brand_tagline = "直接开始创作，而不是先进入后台".into();
+        settings.basic.brand_tagline = "打开即用，专注办公创作".into();
     }
     if settings.basic.default_theme.trim().is_empty() {
         settings.basic.default_theme = "default".into();

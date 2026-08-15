@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth-store'
 import { usePPTStore } from '@/stores/ppt-store'
-import { chatApi, docApi, excelApi, pptApi, sessionApi, projectApi, settingsApi } from '@/api'
+import { chatApi, docApi, excelApi, pptApi, sessionApi, projectApi, settingsApi, fileApi } from '@/api'
 import { ChatPanel } from '@/components/chat/ChatPanel'
 import { SlidePreview } from '@/components/preview/SlidePreview'
 import { ConversationSidebar } from '@/components/history/ConversationSidebar'
@@ -67,6 +68,17 @@ function buildHistoryProcessLogs(session: PersistedSession) {
 
 const IMAGE_ATTACHMENT_MAX_EDGE = 1600
 const IMAGE_ATTACHMENT_TARGET_BYTES = 1.8 * 1024 * 1024
+const SIDEBAR_MIN_WIDTH = 280
+const SIDEBAR_MAX_WIDTH = 520
+const SIDEBAR_DEFAULT_WIDTH = 340
+const SIDEBAR_WIDTH_STORAGE_KEY = 'walioffice:sidebar-width'
+
+function getStoredSidebarWidth() {
+  if (typeof window === 'undefined') return SIDEBAR_DEFAULT_WIDTH
+  const stored = Number(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY))
+  if (!Number.isFinite(stored)) return SIDEBAR_DEFAULT_WIDTH
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, stored))
+}
 
 function playConversationDoneSound() {
   try {
@@ -131,6 +143,8 @@ function blobToDataUrl(blob: Blob) {
 }
 
 export default function Studio() {
+  const navigate = useNavigate()
+  const logout = useAuthStore((s) => s.logout)
   const {
     project, slides, currentSlideIndex, messages,
     isStreaming, sessionId, artifacts, activeArtifactId,
@@ -156,6 +170,7 @@ export default function Studio() {
   const [streamPhase, setStreamPhase] = useState<'idle' | 'thinking' | 'generating' | 'finishing' | 'done' | 'error'>('idle')
   const [processLogs, setProcessLogs] = useState<string[]>([])
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  const [sidebarWidth, setSidebarWidth] = useState(getStoredSidebarWidth)
 
   // 设置 & 模型
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -357,17 +372,13 @@ export default function Studio() {
     }
   }
 
-  const handleClearConversation = async (id: string) => {
-    if (!confirm('确认清空该对话的消息内容？')) return
+  const handleRenameConversation = async (id: string, title: string) => {
     try {
-      await sessionApi.clearSession(id)
+      await sessionApi.updateSession(id, { title })
       refreshConversations()
-      if (sessionId === id) {
-        reset()
-      }
     } catch (err) {
-      console.error('Clear conversation error:', err)
-      alert('清空对话失败')
+      console.error('Rename conversation error:', err)
+      alert('修改对话标题失败')
     }
   }
 
@@ -518,6 +529,7 @@ export default function Studio() {
     const isMarkdown = lowerName.endsWith('.md') || file.type === 'text/markdown'
     const isText = lowerName.endsWith('.txt') || file.type === 'text/plain'
     const isImage = file.type.startsWith('image/')
+    const isOfficeText = /\.(docx|xlsx|pptx|pdf|csv|tsv|json)$/i.test(file.name)
 
     if (isMarkdown || isText) {
       const textContent = await readFileAsText(file)
@@ -533,6 +545,22 @@ export default function Studio() {
 
     if (isImage) {
       return buildImageAttachment(file)
+    }
+
+    if (isOfficeText) {
+      const res = await fileApi.extract(file)
+      const text = String(res.data?.text || '').trim()
+      if (!text) return null
+      const parser = res.data?.parser ? `解析器：${res.data.parser}` : '解析器：server'
+      const truncated = res.data?.truncated ? '（内容较长，已截断）' : ''
+      return {
+        id: `${Date.now()}-${crypto.randomUUID()}`,
+        name: file.name,
+        kind: 'text',
+        mime_type: file.type || 'application/octet-stream',
+        size: file.size,
+        text_content: `【附件：${file.name}】${truncated}\n${parser}\n\n${text}`.slice(0, 50000),
+      }
     }
 
     return null
@@ -553,7 +581,7 @@ export default function Studio() {
       const nextItems = (await Promise.all(files.map(buildAttachmentFromFile))).filter(Boolean) as ChatAttachment[]
       const unsupported = files.length - nextItems.length
       if (unsupported > 0) {
-        alert('目前支持上传 md、txt 和图片文件。')
+        alert('目前支持上传 md、txt、csv、json、docx、xlsx、pptx、pdf 和图片文件。')
       }
       if (nextItems.length === 0) return
 
@@ -1117,6 +1145,37 @@ export default function Studio() {
     updated_at: p.updated_at,
   }))
 
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
+
+  const handleSidebarResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    let latestWidth = startWidth
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      latestWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth + moveEvent.clientX - startX))
+      setSidebarWidth(latestWidth)
+    }
+
+    const handlePointerUp = () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(latestWidth))
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp, { once: true })
+  }
+
   return (
     <div className="h-screen overflow-hidden bg-[#f6f4ef] text-surface-950">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_12%,rgba(255,255,255,0.92),transparent_32%),radial-gradient(circle_at_78%_8%,rgba(226,232,240,0.72),transparent_30%),linear-gradient(135deg,#f7f2e8_0%,#f3f1eb_45%,#ece7dc_100%)]" />
@@ -1133,16 +1192,18 @@ export default function Studio() {
           activeConversationId={sessionId}
           activeView={activeView}
           onToolChange={handleToolChange}
-          onNewProject={handleNewProject}
-          onNewConversation={handleNewConversation}
           onSelectConversation={handleSelectConversation}
           onSelectProject={handleSelectProject}
-          onClearConversation={handleClearConversation}
+          onNewConversation={handleNewConversation}
+          onRenameConversation={handleRenameConversation}
           onDeleteConversation={handleDeleteConversation}
           onDeleteProject={handleDeleteProject}
           onOpenSettings={() => setActiveView('settings')}
+          onLogout={handleLogout}
           searchQuery={conversationQuery}
           onSearchQueryChange={setConversationQuery}
+          width={sidebarWidth}
+          onResizeStart={handleSidebarResizeStart}
         />
 
         <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1210,6 +1271,7 @@ export default function Studio() {
                 artifacts={artifacts}
                 activeArtifactId={activeArtifactId}
                 onProjectChange={(pid) => pid ? handleSelectProject(pid) : setActiveProjectId(null)}
+                onNewProject={handleNewProject}
                 onModelChange={handleModelChange}
                 onToolChange={handleToolChange}
                 onThemeChange={setSelectedTheme}
@@ -1265,7 +1327,7 @@ export default function Studio() {
       <input
         ref={attachmentInputRef}
         type="file"
-        accept=".md,.txt,text/markdown,text/plain,image/*"
+        accept=".md,.txt,.csv,.tsv,.json,.docx,.xlsx,.pptx,.pdf,text/markdown,text/plain,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/*"
         multiple
         className="hidden"
         onChange={handleAttachmentChange}

@@ -148,6 +148,21 @@ pub fn update_summary(pool: &DbPool, session_id: &str, summary: &str) -> AppResu
     Ok(())
 }
 
+pub fn update_title(
+    pool: &DbPool,
+    session_id: &str,
+    owner_id: &str,
+    title: &str,
+) -> AppResult<bool> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = conn.execute(
+        "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3 AND owner_id = ?4",
+        params![title, &now, session_id, owner_id],
+    )?;
+    Ok(affected > 0)
+}
+
 pub fn save_artifacts(pool: &DbPool, session_id: &str, artifacts: &[Artifact]) -> AppResult<()> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let now = chrono::Utc::now().to_rfc3339();

@@ -34,7 +34,7 @@ export function AppLayout() {
               </div>
               <div className="min-w-0">
                 <div className="text-sm font-black tracking-tight text-surface-950">WaLiOffice</div>
-                <div className="text-[11px] text-surface-500">直接开始创作，而不是先进入后台</div>
+                <div className="text-[11px] text-surface-500">打开即用，专注办公创作</div>
               </div>
             </button>
 

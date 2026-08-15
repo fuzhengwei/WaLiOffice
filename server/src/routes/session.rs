@@ -1,6 +1,6 @@
 use axum::extract::Path;
 use axum::extract::Query;
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
@@ -15,7 +15,9 @@ pub fn router() -> Router {
         .route("/api/chat/sessions", get(list_sessions))
         .route(
             "/api/chat/session/:session_id",
-            get(get_session).delete(delete_session),
+            get(get_session)
+                .patch(update_session)
+                .delete(delete_session),
         )
         .route("/api/chat/session/:session_id/messages", get(get_messages))
         .route("/api/chat/session/:session_id/clear", post(clear_session))
@@ -24,6 +26,11 @@ pub fn router() -> Router {
 #[derive(Deserialize)]
 struct SessionListQuery {
     q: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdateSessionPayload {
+    title: Option<String>,
 }
 
 async fn list_sessions(
@@ -60,6 +67,21 @@ async fn get_messages(
     }
     let messages = session_repo::get_messages(&pool, &session_id, 100)?;
     Ok(Json(json!({ "messages": messages })))
+}
+
+async fn update_session(
+    user: AuthUser,
+    Path(session_id): Path<String>,
+    Json(payload): Json<UpdateSessionPayload>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let pool = state::db_pool();
+    let title = payload
+        .title
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .ok_or_else(|| AppError::BadRequest("标题不能为空".into()))?;
+    let updated = session_repo::update_title(&pool, &session_id, &user.0.id, &title)?;
+    Ok(Json(json!({ "updated": updated })))
 }
 
 async fn delete_session(

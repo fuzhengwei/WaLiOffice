@@ -1,4 +1,4 @@
-import { Check, KeyRound, Plus, Server, ShieldCheck, Trash2, X } from 'lucide-react'
+import { Check, KeyRound, Plus, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
 import type { AppSettings, LLMProfile, MCPServiceConfig } from '@/types'
@@ -31,7 +31,7 @@ const emptyMcpServer = (): MCPServiceConfig => ({
 })
 
 export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDialogProps) {
-  const [section, setSection] = useState<'llm' | 'base' | 'mcp'>('llm')
+  const [section, setSection] = useState<'llm' | 'base' | 'mcp'>('mcp')
   const [draft, setDraft] = useState<AppSettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [testingMcpId, setTestingMcpId] = useState<string | null>(null)
@@ -154,7 +154,6 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
           <div className="mb-5 flex items-center justify-between">
             <div>
               <div className="text-lg font-bold tracking-tight text-surface-950">设置</div>
-              <div className="mt-0.5 text-[11px] text-surface-500">模型 · 基础信息 · MCP</div>
             </div>
             <button onClick={onClose} className="rounded-full bg-white/75 p-2 text-surface-500 hover:bg-white hover:text-surface-950" title="关闭">
               <X className="h-4 w-4" />
@@ -163,8 +162,6 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
 
           <div className="space-y-1.5">
             {[
-              ['llm', '模型服务', Server],
-              ['base', '基础信息', ShieldCheck],
               ['mcp', 'MCP 服务', KeyRound],
             ].map(([key, label, Icon]: any) => (
               <button
@@ -177,12 +174,6 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                 {label}
               </button>
             ))}
-          </div>
-
-          <div className="mt-6 rounded-3xl border border-black/[0.05] bg-white/60 p-3 text-[11px] leading-relaxed text-surface-500">
-            <div className="mb-1 font-bold text-surface-700">{draft.basic.app_name}</div>
-            <div className="truncate">{activeProfile?.name || '未配置模型服务'}</div>
-            <div className="mt-1 truncate font-mono text-[10px] text-surface-400">{draft.active_model}</div>
           </div>
         </aside>
 

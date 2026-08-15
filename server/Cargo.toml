@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Web framework
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.7", features = ["macros", "multipart"] }
 axum-extra = { version = "0.9", features = ["typed-header"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"

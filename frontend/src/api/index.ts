@@ -6,7 +6,6 @@ const API_BASE = '/api';
 
 const api = axios.create({
   baseURL: API_BASE,
-  headers: { 'Content-Type': 'application/json' },
 });
 
 // 请求拦截器：自动添加 token
@@ -61,8 +60,8 @@ export const sessionApi = {
   listSessions: (params?: { q?: string; page?: number; page_size?: number }) =>
     api.get('/chat/sessions', { params }),
   getSession: (id: string) => api.get<PersistedSession>(`/chat/session/${id}`),
+  updateSession: (id: string, updates: { title?: string }) => api.patch(`/chat/session/${id}`, updates),
   deleteSession: (id: string) => api.delete(`/chat/session/${id}`),
-  clearSession: (id: string) => api.post(`/chat/session/${id}/clear`),
 };
 
 // ===== Excel API =====
@@ -124,13 +123,19 @@ export const fileApi = {
   upload: (file: File, folderId?: string, description?: string) => {
     const formData = new FormData();
     formData.append('file', file);
-    const headers: Record<string, string> = { 'Content-Type': 'multipart/form-data' };
+    const headers: Record<string, string> = {};
     headers['x-filename'] = file.name;
     if (folderId) headers['x-folder-id'] = folderId;
     if (description) headers['x-description'] = description;
     return api.post('/files/upload', formData, { headers });
   },
+  extract: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/files/extract', formData, { headers: { 'x-filename': file.name } });
+  },
   get: (id: string) => api.get(`/files/${id}`),
+  content: (id: string) => api.get(`/files/${id}/content`),
   download: (id: string) => api.get(`/files/${id}/download`, { responseType: 'blob' }),
   delete: (id: string) => api.delete(`/files/${id}`),
 };

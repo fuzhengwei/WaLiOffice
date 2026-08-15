@@ -1,3 +1,4 @@
+pub mod file_repo;
 pub mod notification_repo;
 pub mod project_repo;
 pub mod session_repo;

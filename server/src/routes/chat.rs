@@ -380,7 +380,7 @@ async fn chat_stream(
             serde_json::json!({
                 "phase": "running",
                 "step": "接收附件",
-                "detail": format!("已接收 {} 个附件（支持 md / txt / 图片；图片会优先尝试视觉识别，若视觉输入失败则退化为 OCR/文本辅助）", attachments.len()),
+                "detail": format!("已接收 {} 个附件（支持 md / txt / csv / json / docx / xlsx / pptx / pdf / 图片；图片会优先尝试视觉识别，若视觉输入失败则退化为 OCR/文本辅助）", attachments.len()),
                 "attachment_count": attachments.len(),
                 "at": chrono::Utc::now().to_rfc3339(),
             }),
