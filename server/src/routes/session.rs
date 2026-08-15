@@ -3,7 +3,7 @@ use axum::extract::Query;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::auth::middleware::AuthUser;
 use crate::db::session_repo;
@@ -31,6 +31,8 @@ struct SessionListQuery {
 #[derive(Deserialize)]
 struct UpdateSessionPayload {
     title: Option<String>,
+    project_id: Option<Value>,
+    order_col: Option<i64>,
 }
 
 async fn list_sessions(
@@ -75,12 +77,38 @@ async fn update_session(
     Json(payload): Json<UpdateSessionPayload>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let title = payload
-        .title
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .ok_or_else(|| AppError::BadRequest("标题不能为空".into()))?;
-    let updated = session_repo::update_title(&pool, &session_id, &user.0.id, &title)?;
+    let mut updated = false;
+
+    if let Some(title) = payload.title {
+        let title = title.trim().to_string();
+        if title.is_empty() {
+            return Err(AppError::BadRequest("标题不能为空".into()));
+        }
+        updated |= session_repo::update_title(&pool, &session_id, &user.0.id, &title)?;
+    }
+
+    if payload.project_id.is_some() || payload.order_col.is_some() {
+        let session = session_repo::find_by_id(&pool, &session_id)?
+            .ok_or(AppError::NotFound("会话不存在".into()))?;
+        if session.owner_id != user.0.id {
+            return Err(AppError::Forbidden);
+        }
+        let project_id_owned = match payload.project_id {
+            Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.trim().to_string()).filter(|value| !value.is_empty()),
+            Some(_) => return Err(AppError::BadRequest("项目 ID 格式不正确".into())),
+            None => session.project_id,
+        };
+        let order_col = payload.order_col.unwrap_or(session.order_col);
+        updated |= session_repo::update_project_and_order(
+            &pool,
+            &session_id,
+            &user.0.id,
+            project_id_owned.as_deref(),
+            order_col,
+        )?;
+    }
+
     Ok(Json(json!({ "updated": updated })))
 }
 

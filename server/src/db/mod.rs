@@ -27,10 +27,27 @@ pub fn init_pool(data_dir: &str) -> Result<DbPool> {
     Ok(pool)
 }
 
+fn ensure_session_order_col(conn: &DbConn) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let mut has_order_col = false;
+    for column in columns {
+        if column? == "order_col" {
+            has_order_col = true;
+            break;
+        }
+    }
+    if !has_order_col {
+        conn.execute("ALTER TABLE sessions ADD COLUMN order_col INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+    Ok(())
+}
+
 fn run_migrations(pool: &DbPool) -> Result<()> {
     let sql = include_str!("../../../migrations/001_init.sql");
     let conn = pool.get()?;
     conn.execute_batch(sql)?;
+    ensure_session_order_col(&conn)?;
 
     // seed admin user
     let admin_username = crate::config::config().admin_username.clone();

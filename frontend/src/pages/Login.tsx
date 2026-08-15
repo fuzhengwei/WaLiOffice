@@ -5,6 +5,7 @@ import { authApi } from '@/api'
 import { Loader2 } from 'lucide-react'
 
 const QR_CODE_URL = 'https://bugstack.cn/images/personal/qrcode.png'
+const LOGO_URL = '/logo.png'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -44,8 +45,8 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-white px-4 py-8 text-surface-900">
       <main className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col items-center justify-center text-center">
-        <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-900 text-xl font-bold text-white shadow-sm">
-          W
+        <div className="mb-5 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/[0.06]">
+          <img src={LOGO_URL} alt="WaLiOffice logo" className="h-full w-full object-cover" />
         </div>
 
         <h1 className="text-4xl font-extrabold tracking-tight text-surface-900">WaLiOffice</h1>

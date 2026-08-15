@@ -1,7 +1,9 @@
-import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Image, LayoutDashboard, LogOut, MoreHorizontal, PenTool, Plus, Search, Settings as SettingsIcon, Sheet, Sparkles, Trash2 } from 'lucide-react'
+import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Image, LayoutDashboard, LogOut, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Settings as SettingsIcon, Sheet, Sparkles, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, DragEvent } from 'react'
 import type { ChatMessage, ConversationRecord, PPTProject, ToolKind, ProjectMeta } from '@/types'
+
+const LOGO_URL = '/logo.png'
 
 interface ConversationSidebarProps {
   project: PPTProject | null
@@ -20,6 +22,7 @@ interface ConversationSidebarProps {
   onRenameConversation?: (id: string, title: string) => void
   onDeleteConversation?: (id: string) => void
   onDeleteProject?: (projectId: string) => void
+  onMoveConversation?: (id: string, projectId: string | null, beforeId?: string | null) => void
   onOpenSettings?: () => void
   onLogout?: () => void
   searchQuery?: string
@@ -82,6 +85,10 @@ function includesKeyword(value: string | undefined, keyword: string) {
   return (value || '').toLowerCase().includes(keyword.toLowerCase())
 }
 
+function sortConversations(items: ConversationRecord[]) {
+  return [...items].sort((a, b) => (a.order_col || 0) - (b.order_col || 0) || Date.parse(b.updated_at || '') - Date.parse(a.updated_at || ''))
+}
+
 export function ConversationSidebar({
   project,
   messages,
@@ -98,6 +105,7 @@ export function ConversationSidebar({
   onRenameConversation,
   onDeleteConversation,
   onDeleteProject,
+  onMoveConversation,
   onOpenSettings,
   onLogout,
   searchQuery = '',
@@ -108,6 +116,8 @@ export function ConversationSidebar({
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [showUnassigned, setShowUnassigned] = useState(true)
   const [hovered, setHovered] = useState<string | null>(null)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ projectId: string | null; beforeId: string | null } | null>(null)
   const [unassignedLimit, setUnassignedLimit] = useState(5)
 
   useEffect(() => {
@@ -149,11 +159,11 @@ export function ConversationSidebar({
       : currentConversations
     const byProject = new Map<string, ConversationRecord[]>()
     for (const proj of filteredProjects) {
-      byProject.set(proj.id, filteredConversations.filter((c) => c.project_id === proj.id))
+      byProject.set(proj.id, sortConversations(filteredConversations.filter((c) => c.project_id === proj.id)))
     }
     return {
       filteredProjects,
-      unassignedConversations: filteredConversations.filter((c) => !c.project_id),
+      unassignedConversations: sortConversations(filteredConversations.filter((c) => !c.project_id)),
       conversationsByProject: byProject,
     }
   }, [projects, currentConversations, searchQuery])
@@ -173,6 +183,43 @@ export function ConversationSidebar({
     onRenameConversation?.(item.id, nextTitle)
   }
 
+  const handleDragStart = (event: DragEvent<HTMLDivElement>, item: ConversationRecord) => {
+    if (item.id === 'current') return
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', item.id)
+    setDraggingId(item.id)
+  }
+
+  const handleDragOver = (event: DragEvent<HTMLElement>, projectId: string | null, beforeId: string | null = null) => {
+    if (!draggingId || draggingId === beforeId) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    setDropTarget({ projectId, beforeId })
+  }
+
+  const handleDrop = (event: DragEvent<HTMLElement>, projectId: string | null, beforeId: string | null = null) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const id = event.dataTransfer.getData('text/plain') || draggingId
+    setDraggingId(null)
+    setDropTarget(null)
+    if (!id || id === 'current' || id === beforeId) return
+    const item = currentConversations.find((conv) => conv.id === id)
+    if (!item) return
+    if ((item.project_id || null) === projectId && id === beforeId) return
+    onMoveConversation?.(id, projectId, beforeId)
+  }
+
+  const handleDragEnd = () => {
+    setDraggingId(null)
+    setDropTarget(null)
+  }
+
+  const isDropTarget = (projectId: string | null, beforeId: string | null = null) => (
+    dropTarget?.projectId === projectId && dropTarget.beforeId === beforeId
+  )
+
   const renderConversationItem = (item: ConversationRecord, child = false) => {
     const active = activeConversationId ? item.id === activeConversationId : item.id === 'current'
     const Icon = iconMap[item.tool] || MessageSquare
@@ -181,10 +228,16 @@ export function ConversationSidebar({
       return (
         <div
           key={item.id}
+          draggable={item.id !== 'current'}
+          onDragStart={(event) => handleDragStart(event, item)}
+          onDragOver={(event) => handleDragOver(event, item.project_id || null, item.id)}
+          onDrop={(event) => handleDrop(event, item.project_id || null, item.id)}
+          onDragEnd={handleDragEnd}
           onMouseEnter={() => setHovered(item.id)}
           onMouseLeave={() => setHovered(null)}
-          className="group relative pl-3"
+          className={`group relative pl-3 ${draggingId === item.id ? 'opacity-45' : ''}`}
         >
+          {isDropTarget(item.project_id || null, item.id) && <div className="mb-1 ml-2 h-0.5 rounded-full bg-surface-950/35" />}
           <div className="absolute left-0 top-0 h-full w-px bg-black/[0.06]" />
           <div className={`absolute left-0 top-1/2 h-px w-2 bg-black/[0.06]`} />
           <button
@@ -220,9 +273,14 @@ export function ConversationSidebar({
     return (
       <div
         key={item.id}
+        draggable={item.id !== 'current'}
+        onDragStart={(event) => handleDragStart(event, item)}
+        onDragOver={(event) => handleDragOver(event, item.project_id || null, item.id)}
+        onDrop={(event) => handleDrop(event, item.project_id || null, item.id)}
+        onDragEnd={handleDragEnd}
         onMouseEnter={() => setHovered(item.id)}
         onMouseLeave={() => setHovered(null)}
-        className={`group relative overflow-hidden rounded-[1.35rem] transition-all duration-200 ${active ? 'bg-white shadow-[0_16px_38px_rgba(24,24,27,0.08)] ring-1 ring-black/[0.06]' : 'bg-white/38 hover:-translate-y-0.5 hover:bg-white/72 hover:shadow-[0_14px_30px_rgba(24,24,27,0.06)]'}`}
+        className={`group relative overflow-hidden rounded-[1.35rem] transition-all duration-200 ${draggingId === item.id ? 'opacity-45' : ''} ${isDropTarget(item.project_id || null, item.id) ? 'ring-2 ring-surface-950/20' : ''} ${active ? 'bg-white shadow-[0_16px_38px_rgba(24,24,27,0.08)] ring-1 ring-black/[0.06]' : 'bg-white/38 hover:-translate-y-0.5 hover:bg-white/72 hover:shadow-[0_14px_30px_rgba(24,24,27,0.06)]'}`}
       >
         {active && <div className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-surface-950" />}
         <button
@@ -272,8 +330,8 @@ export function ConversationSidebar({
     >
       <div className="border-b border-black/[0.04] bg-[#fbf8f1]/68 px-5 pb-5 pt-6 shadow-[0_1px_0_rgba(255,255,255,0.75)_inset]">
         <div className="mb-5 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-surface-900 shadow-sm ring-1 ring-black/[0.06]">
-            <Sparkles className="h-[18px] w-[18px]" />
+          <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl bg-white text-surface-900 shadow-sm ring-1 ring-black/[0.06]">
+            <img src={LOGO_URL} alt="WaLiOffice logo" className="h-full w-full object-cover" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-base font-black tracking-tight text-surface-950">WaLiOffice</div>
@@ -314,7 +372,12 @@ export function ConversationSidebar({
             const isActive = activeProjectId === proj.id
             const ToolIcon = iconMap[proj.tool_kind || 'general'] || Folder
             return (
-              <section key={proj.id} className={`group overflow-hidden rounded-[1.35rem] border transition-all ${isActive ? 'border-surface-950/10 bg-white/80 shadow-sm' : 'border-black/[0.04] bg-white/42 hover:bg-white/62'}`}>
+              <section
+                key={proj.id}
+                onDragOver={(event) => handleDragOver(event, proj.id)}
+                onDrop={(event) => handleDrop(event, proj.id)}
+                className={`group overflow-hidden rounded-[1.35rem] border transition-all ${isDropTarget(proj.id) ? 'border-surface-950/25 bg-white/82 ring-2 ring-surface-950/10' : isActive ? 'border-surface-950/10 bg-white/80 shadow-sm' : 'border-black/[0.04] bg-white/42 hover:bg-white/62'}`}
+              >
                 <div className="flex items-center gap-1 p-1.5">
                   <button
                     type="button"
@@ -370,7 +433,7 @@ export function ConversationSidebar({
           })}
         </div>
 
-        {unassignedConversations.length > 0 && (
+        {(unassignedConversations.length > 0 || draggingId) && (
           <section className="mt-4">
             <button
               type="button"
@@ -383,8 +446,12 @@ export function ConversationSidebar({
                 <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showUnassigned ? '' : '-rotate-90'}`} />
               </span>
             </button>
-            {showUnassigned && (
-              <div className="space-y-1.5 rounded-[1.6rem] border border-white/55 bg-white/30 p-1.5 shadow-[0_12px_28px_rgba(24,24,27,0.035)] backdrop-blur">
+            {(showUnassigned || draggingId) && (
+              <div
+                onDragOver={(event) => handleDragOver(event, null)}
+                onDrop={(event) => handleDrop(event, null)}
+                className={`space-y-1.5 rounded-[1.6rem] border p-1.5 shadow-[0_12px_28px_rgba(24,24,27,0.035)] backdrop-blur ${isDropTarget(null) ? 'border-surface-950/20 bg-white/55 ring-2 ring-surface-950/10' : 'border-white/55 bg-white/30'}`}
+              >
                 {unassignedConversations.slice(0, unassignedLimit).map((item) => renderConversationItem(item))}
                 {unassignedConversations.length > unassignedLimit && (
                   <button

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { EChartsView } from '@/components/preview/EChartsView'
 import type { Slide, SlideElement } from '@/types'
 
 interface SlideRendererProps {
@@ -262,8 +263,14 @@ function ElementRenderer({
 
   if (el.type === 'chart') {
     return (
-      <div style={baseStyle} className="items-center justify-center bg-surface-50 rounded-xl">
-        <span className="text-surface-400 text-sm">📊 {el.chart_type || 'Chart'} Chart</span>
+      <div style={baseStyle} className="overflow-hidden rounded-xl bg-white p-2 shadow-sm ring-1 ring-black/[0.06]">
+        <EChartsView
+          title={el.text || el.chart_type || '图表'}
+          chartType={el.chart_type}
+          chartData={el.chart_data}
+          option={el.chart_data?.option}
+          style={{ minHeight: 0 }}
+        />
       </div>
     )
   }

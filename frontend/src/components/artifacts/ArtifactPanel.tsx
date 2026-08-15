@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { DrawIoEmbed, type DrawIoEmbedRef } from '@/lib/react-drawio'
+import { EChartsView } from '@/components/preview/EChartsView'
 import { SlideList } from '@/components/slides/SlideList'
 import { SlidePreview } from '@/components/preview/SlidePreview'
 import { Toolbar } from '@/components/toolbar/Toolbar'
@@ -523,6 +524,31 @@ function VideoArtifact({ artifact }: { artifact: Artifact }) {
   )
 }
 
+function ChartArtifact({ artifact }: { artifact: Artifact }) {
+  const content = artifact.content || {}
+  return (
+    <div className="flex h-full w-full flex-col gap-3">
+      <div className="shrink-0 rounded-2xl border border-surface-200 bg-white px-4 py-3 shadow-sm">
+        <div className="text-sm font-semibold text-surface-900">{artifact.title || content.title || '数据图表'}</div>
+        <div className="mt-1 text-xs text-surface-500">ECharts 动态渲染 · 支持普通对话、数据分析和 PPT 嵌入</div>
+      </div>
+      {content.summary && (
+        <div className="shrink-0 rounded-2xl border border-primary-100 bg-primary-50 px-4 py-3 text-sm leading-7 text-primary-900">
+          {content.summary}
+        </div>
+      )}
+      <div className="min-h-[420px] flex-1 overflow-hidden rounded-2xl border border-surface-200 bg-white p-4 shadow-sm">
+        <EChartsView
+          title={artifact.title || content.title}
+          chartType={content.chart_type || content.type}
+          chartData={content.chart_data || content.data || content}
+          option={content.option}
+        />
+      </div>
+    </div>
+  )
+}
+
 function SearchArtifact({ artifact }: { artifact: Artifact }) {
   const provider = artifact.content?.provider_label || artifact.content?.provider || '未知来源'
   const query = artifact.content?.query || artifact.title
@@ -637,6 +663,7 @@ function ArtifactBody({ artifact, activeTool, onUpdate, onExportExcel, onExportD
   if (artifact.kind === 'sheet') return <SheetArtifact artifact={artifact} onUpdate={(updates) => onUpdate(artifact.id, updates)} onExport={() => onExportExcel(artifact)} />
   if (artifact.kind === 'image') return <ImageArtifact artifact={artifact} />
   if (artifact.kind === 'video') return <VideoArtifact artifact={artifact} />
+  if (artifact.kind === 'chart') return <ChartArtifact artifact={artifact} />
   if (artifact.kind === 'search') return <SearchArtifact artifact={artifact} />
   if (artifact.kind === 'code') return <CodeArtifact artifact={artifact} />
   if (artifact.kind === 'mixed') return <MixedArtifact artifact={artifact} />
@@ -704,6 +731,7 @@ export function ArtifactPanel({
     ppt: 'PPT',
     image: '图片',
     video: '视频',
+    chart: '图表',
     search: '搜索',
     code: '代码',
     mixed: '综合',

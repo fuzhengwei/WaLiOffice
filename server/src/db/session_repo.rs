@@ -13,6 +13,7 @@ pub struct SessionRow {
     pub title: String,
     pub summary: Option<String>,
     pub message_count: i64,
+    pub order_col: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -26,6 +27,7 @@ pub struct SessionDetail {
     pub title: String,
     pub summary: Option<String>,
     pub message_count: i64,
+    pub order_col: i64,
     pub created_at: String,
     pub updated_at: String,
     pub messages: Vec<PersistedChatMessage>,
@@ -43,8 +45,8 @@ pub fn create(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO sessions (id, owner_id, project_id, tool_kind, title, message_count, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
+        "INSERT INTO sessions (id, owner_id, project_id, tool_kind, title, message_count, order_col, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, strftime('%s','now'), ?6, ?7)",
         params![id, owner_id, project_id, tool_kind, title, &now, &now],
     )?;
     Ok(SessionRow {
@@ -55,6 +57,7 @@ pub fn create(
         title: title.to_string(),
         summary: None,
         message_count: 0,
+        order_col: chrono::Utc::now().timestamp(),
         created_at: now.clone(),
         updated_at: now,
     })
@@ -63,13 +66,13 @@ pub fn create(
 pub fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<SessionRow>> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let row = conn.query_row(
-        "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, created_at, updated_at
+        "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, order_col, created_at, updated_at
          FROM sessions WHERE id = ?1",
         params![id],
         |row| Ok(SessionRow {
             id: row.get(0)?, owner_id: row.get(1)?, project_id: row.get(2)?, tool_kind: row.get(3)?,
-            title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?,
-            created_at: row.get(7)?, updated_at: row.get(8)?,
+            title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?, order_col: row.get(7)?,
+            created_at: row.get(8)?, updated_at: row.get(9)?,
         }),
     );
     match row {
@@ -92,10 +95,10 @@ pub fn list_by_owner(
     let mut result = Vec::new();
     if let Some(ref qv) = q {
         let mut stmt = conn.prepare(
-            "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, created_at, updated_at
+            "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, order_col, created_at, updated_at
              FROM sessions
              WHERE owner_id = ?1 AND (title LIKE ?2 OR COALESCE(summary, '') LIKE ?2)
-             ORDER BY updated_at DESC LIMIT ?3"
+             ORDER BY order_col ASC, updated_at DESC LIMIT ?3"
         )?;
         let rows = stmt.query_map(params![owner_id, qv, limit], |row| {
             Ok(SessionRow {
@@ -106,8 +109,9 @@ pub fn list_by_owner(
                 title: row.get(4)?,
                 summary: row.get(5)?,
                 message_count: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                order_col: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         })?;
         for row in rows {
@@ -115,8 +119,8 @@ pub fn list_by_owner(
         }
     } else {
         let mut stmt = conn.prepare(
-            "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, created_at, updated_at
-             FROM sessions WHERE owner_id = ?1 ORDER BY updated_at DESC LIMIT ?2"
+            "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, order_col, created_at, updated_at
+             FROM sessions WHERE owner_id = ?1 ORDER BY order_col ASC, updated_at DESC LIMIT ?2"
         )?;
         let rows = stmt.query_map(params![owner_id, limit], |row| {
             Ok(SessionRow {
@@ -127,8 +131,9 @@ pub fn list_by_owner(
                 title: row.get(4)?,
                 summary: row.get(5)?,
                 message_count: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                order_col: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         })?;
         for row in rows {
@@ -159,6 +164,21 @@ pub fn update_title(
     let affected = conn.execute(
         "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3 AND owner_id = ?4",
         params![title, &now, session_id, owner_id],
+    )?;
+    Ok(affected > 0)
+}
+
+pub fn update_project_and_order(
+    pool: &DbPool,
+    session_id: &str,
+    owner_id: &str,
+    project_id: Option<&str>,
+    order_col: i64,
+) -> AppResult<bool> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let affected = conn.execute(
+        "UPDATE sessions SET project_id = ?1, order_col = ?2 WHERE id = ?3 AND owner_id = ?4",
+        params![project_id, order_col, session_id, owner_id],
     )?;
     Ok(affected > 0)
 }
@@ -213,6 +233,7 @@ pub fn get_session_detail(pool: &DbPool, session_id: &str) -> AppResult<Option<S
         title: session.title,
         summary: session.summary,
         message_count: session.message_count,
+        order_col: session.order_col,
         created_at: session.created_at,
         updated_at: session.updated_at,
         messages,

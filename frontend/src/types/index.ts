@@ -1,7 +1,7 @@
 // ===== 工具智能体 =====
 export type ToolKind = 'general' | 'ppt' | 'doc' | 'drawio' | 'excel' | 'image' | 'video' | 'code';
 
-export type ArtifactKind = 'document' | 'markdown' | 'ppt' | 'drawio' | 'sheet' | 'image' | 'video' | 'code' | 'mixed' | 'search';
+export type ArtifactKind = 'document' | 'markdown' | 'ppt' | 'drawio' | 'sheet' | 'chart' | 'image' | 'video' | 'code' | 'mixed' | 'search';
 
 export interface ChatAttachment {
   id: string;
@@ -82,6 +82,7 @@ export interface ConversationRecord {
   summary?: string;
   updated_at: string;
   message_count: number;
+  order_col?: number;
   project_id?: string;
   project_title?: string;
 }
@@ -112,6 +113,7 @@ export interface PersistedSession {
   tool_kind?: ToolKind;
   title: string;
   summary?: string;
+  order_col?: number;
   created_at: string;
   updated_at: string;
 }

@@ -2,6 +2,8 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { Bell, Files, LogOut, Sparkles, SquareCheckBig } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 
+const LOGO_URL = '/logo.png'
+
 const NAV_ITEMS = [
   { to: '/', label: '智能助手', icon: Sparkles, end: true },
   { to: '/tasks', label: '任务清单', icon: SquareCheckBig },
@@ -29,8 +31,8 @@ export function AppLayout() {
               onClick={() => navigate('/')}
               className="flex items-center gap-3 rounded-full px-1 py-1 text-left transition hover:bg-white/40"
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-surface-950 shadow-sm">
-                <Sparkles className="h-5 w-5 text-white" />
+              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/[0.06]">
+                <img src={LOGO_URL} alt="WaLiOffice logo" className="h-full w-full object-cover" />
               </div>
               <div className="min-w-0">
                 <div className="text-sm font-black tracking-tight text-surface-950">WaLiOffice</div>

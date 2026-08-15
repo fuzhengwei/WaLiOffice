@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     title TEXT NOT NULL,
     summary TEXT,
     message_count INTEGER NOT NULL DEFAULT 0,
+    order_col INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (owner_id) REFERENCES users(id),

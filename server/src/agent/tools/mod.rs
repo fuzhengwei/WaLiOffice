@@ -1,4 +1,5 @@
 pub mod agnes_media;
+pub mod chart_generate;
 pub mod doc_generate;
 pub mod drawio_generate;
 pub mod image_prompt;
@@ -26,6 +27,9 @@ pub async fn register_all_tools() {
         .await;
     REGISTRY
         .register(Arc::new(sheet_generate::SheetGenerateTool))
+        .await;
+    REGISTRY
+        .register(Arc::new(chart_generate::ChartGenerateTool))
         .await;
     REGISTRY
         .register(Arc::new(drawio_generate::DrawioGenerateTool))

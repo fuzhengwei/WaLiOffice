@@ -60,7 +60,7 @@ export const sessionApi = {
   listSessions: (params?: { q?: string; page?: number; page_size?: number }) =>
     api.get('/chat/sessions', { params }),
   getSession: (id: string) => api.get<PersistedSession>(`/chat/session/${id}`),
-  updateSession: (id: string, updates: { title?: string }) => api.patch(`/chat/session/${id}`, updates),
+  updateSession: (id: string, updates: { title?: string; project_id?: string | null; order_col?: number }) => api.patch(`/chat/session/${id}`, updates),
   deleteSession: (id: string) => api.delete(`/chat/session/${id}`),
 };
 

@@ -1,4 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Palette, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X, Clapperboard } from 'lucide-react'
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
@@ -42,68 +44,44 @@ function renderMarkdown(content: string) {
     .trim()
     .replace(/^```(?:md|markdown)\s*/i, '')
     .replace(/\s*```$/, '')
-  const lines = normalized.split('\n')
-  const nodes: React.ReactNode[] = []
-  let list: string[] = []
-  let orderedList: string[] = []
-  let code: string[] = []
-  let inCode = false
 
-  const inline = (text: string) => {
-    const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g)
-    return parts.map((part, idx) => {
-      if (part.startsWith('**') && part.endsWith('**')) {
-        return <strong key={idx}>{part.slice(2, -2)}</strong>
-      }
-      if (part.startsWith('`') && part.endsWith('`')) {
-        return <code key={idx} className="rounded-md bg-surface-100 px-1.5 py-0.5 text-[0.9em] text-surface-800">{part.slice(1, -1)}</code>
-      }
-      return <span key={idx}>{part}</span>
-    })
-  }
-
-  const flushList = () => {
-    if (list.length) {
-      nodes.push(<ul key={`ul-${nodes.length}`} className="my-2 list-disc space-y-1.5 pl-5">{list.map((item, i) => <li key={i}>{inline(item)}</li>)}</ul>)
-      list = []
-    }
-  }
-  const flushOrderedList = () => {
-    if (orderedList.length) {
-      nodes.push(<ol key={`ol-${nodes.length}`} className="my-2 list-decimal space-y-1.5 pl-5">{orderedList.map((item, i) => <li key={i}>{inline(item)}</li>)}</ol>)
-      orderedList = []
-    }
-  }
-  const flushCode = () => {
-    if (code.length) {
-      nodes.push(<pre key={`code-${nodes.length}`} className="my-3 overflow-auto rounded-2xl bg-surface-950 px-4 py-3 text-xs text-white shadow-inner"><code>{code.join('\n')}</code></pre>)
-      code = []
-    }
-  }
-
-  lines.forEach((line, idx) => {
-    if (line.trim().startsWith('```')) {
-      if (inCode) { inCode = false; flushCode() } else { flushList(); flushOrderedList(); inCode = true }
-      return
-    }
-    if (inCode) { code.push(line); return }
-
-    const trimmed = line.trim()
-    if (!trimmed) { flushList(); flushOrderedList(); nodes.push(<div key={`br-${idx}`} className="h-1.5" />); return }
-    const bullet = trimmed.match(/^[-*•]\s+(.+)$/)
-    if (bullet) { list.push(bullet[1]); return }
-    const ordered = trimmed.match(/^\d+\.\s+(.+)$/)
-    if (ordered) { orderedList.push(ordered[1]); return }
-    flushList()
-    flushOrderedList()
-    if (trimmed.startsWith('### ')) nodes.push(<h3 key={idx} className="mt-3 font-semibold text-surface-950">{inline(trimmed.slice(4))}</h3>)
-    else if (trimmed.startsWith('## ')) nodes.push(<h2 key={idx} className="mt-4 text-base font-semibold text-surface-950">{inline(trimmed.slice(3))}</h2>)
-    else if (trimmed.startsWith('# ')) nodes.push(<h1 key={idx} className="mt-4 text-lg font-bold text-surface-950">{inline(trimmed.slice(2))}</h1>)
-    else if (trimmed.startsWith('> ')) nodes.push(<blockquote key={idx} className="my-2 border-l-2 border-surface-200 pl-3 text-surface-500">{inline(trimmed.slice(2))}</blockquote>)
-    else nodes.push(<p key={idx} className="my-1.5">{inline(line)}</p>)
-  })
-  flushList(); flushOrderedList(); flushCode()
-  return nodes
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1: ({ children }) => <h1 className="mt-3 text-lg font-bold text-surface-950">{children}</h1>,
+        h2: ({ children }) => <h2 className="mt-3 text-base font-semibold text-surface-950">{children}</h2>,
+        h3: ({ children }) => <h3 className="mt-3 font-semibold text-surface-950">{children}</h3>,
+        p: ({ children }) => <p className="my-1.5">{children}</p>,
+        strong: ({ children }) => <strong className="font-semibold text-surface-950">{children}</strong>,
+        ul: ({ children }) => <ul className="my-2 list-disc space-y-1.5 pl-5">{children}</ul>,
+        ol: ({ children }) => <ol className="my-2 list-decimal space-y-1.5 pl-5">{children}</ol>,
+        li: ({ children }) => <li>{children}</li>,
+        blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-surface-200 pl-3 text-surface-500">{children}</blockquote>,
+        hr: () => <hr className="my-4 border-surface-200" />,
+        table: ({ children }) => (
+          <div className="my-3 max-w-full overflow-x-auto rounded-xl border border-surface-200">
+            <table className="min-w-full border-collapse bg-white text-sm">{children}</table>
+          </div>
+        ),
+        thead: ({ children }) => <thead className="bg-surface-50 text-surface-800">{children}</thead>,
+        tr: ({ children }) => <tr className="border-b border-surface-200 last:border-b-0">{children}</tr>,
+        th: ({ children }) => <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{children}</th>,
+        td: ({ children }) => <td className="px-3 py-2 align-top text-surface-700">{children}</td>,
+        code: ({ className, children }) => {
+          const raw = String(children).replace(/\n$/, '')
+          const isBlock = /language-/.test(className || '') || raw.includes('\n')
+          if (isBlock) {
+            return <code className="block overflow-auto rounded-2xl bg-surface-950 px-4 py-3 text-xs text-white shadow-inner">{raw}</code>
+          }
+          return <code className="rounded-md bg-surface-100 px-1.5 py-0.5 text-[0.9em] text-surface-800">{raw}</code>
+        },
+        pre: ({ children }) => <pre className="my-3">{children}</pre>,
+      }}
+    >
+      {normalized}
+    </ReactMarkdown>
+  )
 }
 
 function formatAttachmentSize(size?: number) {
@@ -286,7 +264,8 @@ export function ChatPanel({
   const tool = getAgentTool(activeTool)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const [processPanelExpanded, setProcessPanelExpanded] = useState(true)
-  const [artifactSummaryExpanded, setArtifactSummaryExpanded] = useState(true)
+  const [artifactSummaryExpanded, setArtifactSummaryExpanded] = useState(false)
+  const previousArtifactsLengthRef = useRef(artifacts.length)
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
@@ -299,8 +278,11 @@ export function ChatPanel({
   }, [isStreaming, streamPhase])
 
   useEffect(() => {
-    if (artifacts.length > 0) setArtifactSummaryExpanded(true)
-  }, [artifacts.length])
+    if (isStreaming && artifacts.length > previousArtifactsLengthRef.current) {
+      setArtifactSummaryExpanded(true)
+    }
+    previousArtifactsLengthRef.current = artifacts.length
+  }, [artifacts.length, isStreaming])
 
   useEffect(() => {
     if (!isStreaming) {

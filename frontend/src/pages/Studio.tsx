@@ -8,8 +8,8 @@ import { SlidePreview } from '@/components/preview/SlidePreview'
 import { ConversationSidebar } from '@/components/history/ConversationSidebar'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
-import { Sparkles, Play, X, PanelRightClose, PanelRight } from 'lucide-react'
-import type { Artifact, ConversationRecord, ToolKind, ProjectMeta, AppSettings, LLMProfile, PersistedSession, ChatAttachment } from '@/types'
+import { Play, X, PanelRightClose, PanelRight } from 'lucide-react'
+const LOGO_URL = '/logo.png'
 
 function buildRestoredMessages(session: PersistedSession) {
   const restored = (session.messages || [])
@@ -235,6 +235,7 @@ export default function Studio() {
         summary: item.summary,
         updated_at: item.updated_at,
         message_count: item.message_count || 0,
+        order_col: item.order_col || 0,
         project_id: item.project_id,
       }))
       setConversations(rows)
@@ -394,6 +395,40 @@ export default function Studio() {
     } catch (err) {
       console.error('Delete conversation error:', err)
       alert('删除对话失败')
+    }
+  }
+
+  const handleMoveConversation = async (id: string, projectId: string | null, beforeId?: string | null) => {
+    const moving = conversations.find((item) => item.id === id)
+    if (!moving) return
+
+    const targetItems = conversations
+      .filter((item) => item.id !== id && (item.project_id || null) === projectId)
+      .sort((a, b) => (a.order_col || 0) - (b.order_col || 0))
+    const beforeIndex = beforeId ? targetItems.findIndex((item) => item.id === beforeId) : -1
+    const insertIndex = beforeIndex >= 0 ? beforeIndex : targetItems.length
+    targetItems.splice(insertIndex, 0, { ...moving, project_id: projectId || undefined })
+    const orderMap = new Map(targetItems.map((item, index) => [item.id, (index + 1) * 1000]))
+
+    const nextConversations = conversations.map((item) => {
+      if (item.id === id) return { ...item, project_id: projectId || undefined, order_col: orderMap.get(item.id) || item.order_col }
+      if (orderMap.has(item.id)) return { ...item, order_col: orderMap.get(item.id) }
+      return item
+    })
+    setConversations(nextConversations)
+
+    try {
+      await Promise.all(targetItems.map((item) => sessionApi.updateSession(item.id, {
+        project_id: item.id === id ? projectId : item.project_id || null,
+        order_col: orderMap.get(item.id) || 0,
+      })))
+      refreshConversations()
+      refreshProjects()
+    } catch (err) {
+      console.error('Move conversation error:', err)
+      alert('移动对话失败')
+      refreshConversations()
+      refreshProjects()
     }
   }
 
@@ -1197,6 +1232,7 @@ export default function Studio() {
           onNewConversation={handleNewConversation}
           onRenameConversation={handleRenameConversation}
           onDeleteConversation={handleDeleteConversation}
+          onMoveConversation={handleMoveConversation}
           onDeleteProject={handleDeleteProject}
           onOpenSettings={() => setActiveView('settings')}
           onLogout={handleLogout}
@@ -1209,8 +1245,8 @@ export default function Studio() {
         <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <header className="relative z-20 flex h-14 shrink-0 items-center justify-between border-b border-black/[0.05] bg-[#f6f4ef]/78 px-5 backdrop-blur-2xl">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-2xl bg-white/70 shadow-sm ring-1 ring-black/[0.04]">
-                <Sparkles className="h-4 w-4 text-surface-900" />
+              <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-2xl bg-white/70 shadow-sm ring-1 ring-black/[0.04]">
+                <img src={LOGO_URL} alt="WaLiOffice logo" className="h-full w-full object-cover" />
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold tracking-tight text-surface-950">
