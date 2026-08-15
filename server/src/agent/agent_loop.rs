@@ -1,0 +1,338 @@
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+use uuid::Uuid;
+
+use crate::llm::{LlmClient, FunctionDef};
+use crate::models::{ChatMessage, Artifact};
+use super::tool::{ToolContext, ToolResult, ToolArtifact};
+use super::registry::REGISTRY;
+use super::context::{compact_context, DEFAULT_CONTEXT_CONFIG};
+
+/// Agent 事件（通过 channel 向上层推送）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AgentEvent {
+    Thinking { content: String },
+    ToolCall { tool: String, input: serde_json::Value },
+    ToolResult { tool: String, success: bool, result: serde_json::Value, error: Option<String> },
+    Artifact { artifact: Artifact },
+    Message { content: String },
+    TurnEnd { turn: usize },
+    Done { summary: String, artifacts: Vec<Artifact> },
+    Error { message: String },
+}
+
+/// Agent 配置
+#[derive(Clone)]
+pub struct AgentConfig {
+    pub max_turns: usize,
+    pub system_prompt: String,
+    pub allowed_tools: Option<Vec<String>>,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            max_turns: 8,
+            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            allowed_tools: None,
+        }
+    }
+}
+
+const DEFAULT_SYSTEM_PROMPT: &str = r#"你是一个智能办公 Agent。你可以调用工具来帮助用户完成办公任务。
+
+## 工作原则
+1. 先理解用户意图，再选择合适的工具
+2. 一次只调用必要的工具，不要过度调用
+3. 工具返回结果后，总结关键信息给用户
+4. 如果用户需求模糊，先询问澄清后再行动
+5. 不要编造工具不存在的能力
+
+## 输出规范
+- 有工具需要调用时，返回 tool_calls
+- 没有工具需要调用时，返回简洁的自然语言回复
+- 不要在文本中模拟工具调用结果"#;
+
+const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮助用户生成 PPT、文档、表格、流程图和图片提示词。
+
+## 可用工具
+- ppt_plan: 规划 PPT 大纲（只读，不产生最终产物）
+- ppt_generate: 生成完整 PPT 项目（含视觉设计）
+- doc_generate: 生成 Markdown 文档（报告/计划/总结/文章/PRD）
+- sheet_generate: 生成结构化表格（可导出 Excel）
+- drawio_generate: 生成 draw.io 可编辑图表（流程图/架构图等）
+- image_prompt: 生成图片提示词草案
+
+## 意图识别规则
+- PPT/演示文稿/幻灯片/presentation/汇报材料/做个PPT → 先调 ppt_plan 再调 ppt_generate
+- 文档/报告/PRD/方案/纪要/文章/docx/markdown → doc_generate
+- excel/xlsx/表格/数据分析/排期/预算/数据指标 → sheet_generate
+- draw.io/流程图/架构图/泳道图/拓扑图/ER图 → drawio_generate
+- 图片/图像/海报/封面/logo/配图 → image_prompt
+- 用户说"做个XX"但未明确类型时，根据内容判断最合适的产物形式
+
+## 工作原则
+1. PPT 任务：先调用 ppt_plan 规划大纲，再调用 ppt_generate 生成幻灯片（两步缺一不可）
+2. 其他任务：直接调用对应工具
+3. 用户需求模糊时，先简短询问再行动
+4. 不要在一次回复中调用超过 3 个工具
+5. 工具执行完毕后，简洁总结结果给用户
+6. 不要在文本中模拟工具调用结果"#;
+
+/// 运行 Agent 循环，通过 channel 推送事件
+pub async fn run_agent_loop(
+    history: Vec<ChatMessage>,
+    user_message: String,
+    ctx: ToolContext,
+    config: AgentConfig,
+    client: std::sync::Arc<crate::llm::LlmClient>,
+) -> mpsc::Receiver<AgentEvent> {
+    let (tx, rx) = mpsc::channel(256);
+
+    let client = client.clone();
+    tokio::spawn(async move {
+        let max_turns = config.max_turns;
+        let system_prompt = if config.system_prompt.is_empty() {
+            OFFICE_AGENT_PROMPT.to_string()
+        } else {
+            config.system_prompt
+        };
+
+        // 获取工具定义
+        let all_tools = REGISTRY.list().await;
+        let function_defs: Vec<FunctionDef> = if let Some(ref allowed) = config.allowed_tools {
+            REGISTRY
+                .to_function_defs()
+                .await
+                .into_iter()
+                .filter(|d| allowed.contains(&d.function.name))
+                .collect()
+        } else {
+            REGISTRY.to_function_defs().await
+        };
+
+        // 上下文压缩
+        let compacted = compact_context(history, &DEFAULT_CONTEXT_CONFIG, &client).await;
+
+        // 组装消息
+        let mut conversation: Vec<ChatMessage> = vec![ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        // 保留最近 8 条历史
+        let hist_start = compacted.len().saturating_sub(8);
+        conversation.extend(compacted[hist_start..].to_vec());
+        conversation.push(ChatMessage {
+            role: "user".to_string(),
+            content: user_message,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        let mut all_artifacts: Vec<Artifact> = Vec::new();
+
+        for turn in 0..max_turns {
+            // 调用 LLM
+            let llm_response = match client.chat(&conversation, Some(&function_defs)).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let _ = tx
+                        .send(AgentEvent::Error {
+                            message: format!("LLM 调用失败: {e}"),
+                        })
+                        .await;
+                    return;
+                }
+            };
+
+            let choice = match llm_response.choices.first() {
+                Some(c) => c,
+                None => {
+                    let _ = tx
+                        .send(AgentEvent::Error {
+                            message: "LLM 返回空响应".to_string(),
+                        })
+                        .await;
+                    return;
+                }
+            };
+
+            // 没有工具调用 → 返回文本回复
+            let tool_calls = choice.message.tool_calls.as_ref();
+            if tool_calls.is_none() || tool_calls.map_or(true, |t| t.is_empty()) {
+                let content = choice
+                    .message
+                    .content
+                    .clone()
+                    .unwrap_or_else(|| "我已完成你的请求。".to_string());
+
+                let _ = tx.send(AgentEvent::Message { content: content.clone() }).await;
+                let _ = tx
+                    .send(AgentEvent::Done {
+                        summary: content,
+                        artifacts: all_artifacts,
+                    })
+                    .await;
+                return;
+            }
+
+            let tool_calls = tool_calls.unwrap();
+
+            // thinking 内容
+            if let Some(ref content) = choice.message.content {
+                if !content.is_empty() {
+                    let _ = tx
+                        .send(AgentEvent::Thinking {
+                            content: content.chars().take(200).collect(),
+                        })
+                        .await;
+                }
+            }
+
+            // 将 assistant 消息（含 tool_calls）加入上下文
+            conversation.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: choice.message.content.clone().unwrap_or_default(),
+                tool_calls: Some(
+                    tool_calls
+                        .iter()
+                        .map(|tc| serde_json::json!({
+                            "id": tc.id,
+                            "type": tc.call_type,
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            }
+                        }))
+                        .collect(),
+                ),
+                tool_call_id: None,
+            });
+
+            // 逐个执行工具调用
+            for tc in tool_calls {
+                let tool_name = &tc.function.name;
+                let input: serde_json::Value = serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
+
+                let _ = tx
+                    .send(AgentEvent::ToolCall {
+                        tool: tool_name.clone(),
+                        input: input.clone(),
+                    })
+                    .await;
+
+                // 日志
+                info!("[ToolLog] {} → {}", ctx.session_id, tool_name);
+
+                let result = match REGISTRY.get(tool_name).await {
+                    Some(tool) => tool.call(input.clone(), &ctx).await,
+                    None => ToolResult::err(format!(
+                        "工具 \"{tool_name}\" 未注册。可用工具: {}",
+                        all_tools.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ")
+                    )),
+                };
+
+                let _ = tx
+                    .send(AgentEvent::ToolResult {
+                        tool: tool_name.clone(),
+                        success: result.success,
+                        result: result.data.clone().unwrap_or(serde_json::Value::Null),
+                        error: result.error.clone(),
+                    })
+                    .await;
+
+                // 将工具结果加入上下文
+                let tool_content = serde_json::to_string(&serde_json::json!({
+                    "success": result.success,
+                    "data": result.data,
+                    "error": result.error,
+                    "observation": result.observation,
+                }))
+                .unwrap_or_default()
+                .chars()
+                .take(4000)
+                .collect::<String>();
+
+                conversation.push(ChatMessage {
+                    role: "tool".to_string(),
+                    content: tool_content,
+                    tool_calls: None,
+                    tool_call_id: Some(tc.id.clone()),
+                });
+
+                // 收集 Artifact
+                if result.success {
+                    if let Some(artifacts) = &result.artifacts {
+                        for art in artifacts {
+                            let artifact = Artifact {
+                                id: Uuid::new_v4().to_string(),
+                                kind: art.kind.clone(),
+                                tool_kind: map_artifact_to_tool_kind(&art.kind),
+                                title: art.title.clone(),
+                                status: "ready".to_string(),
+                                content: art.content.clone(),
+                                version: 1,
+                                created_at: chrono::Utc::now().to_rfc3339(),
+                                updated_at: chrono::Utc::now().to_rfc3339(),
+                            };
+                            all_artifacts.push(artifact.clone());
+                            let _ = tx.send(AgentEvent::Artifact { artifact }).await;
+                        }
+                    }
+                }
+            }
+
+            let _ = tx.send(AgentEvent::TurnEnd { turn: turn + 1 }).await;
+        }
+
+        // 超过最大轮次，用无工具调用生成总结
+        info!("[AgentLoop] max turns ({max_turns}) reached, generating summary");
+        conversation.push(ChatMessage {
+            role: "system".to_string(),
+            content: "你已经完成了多轮工具调用。请根据以上工具执行结果，给用户一个简洁的总结回复。不要调用任何工具。".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        match client.chat(&conversation, None).await {
+            Ok(resp) => {
+                let content = resp
+                    .choices
+                    .first()
+                    .and_then(|c| c.message.content.as_deref())
+                    .unwrap_or("任务已完成。")
+                    .to_string();
+                let _ = tx.send(AgentEvent::Message { content: content.clone() }).await;
+                let _ = tx.send(AgentEvent::Done { summary: content, artifacts: all_artifacts }).await;
+            }
+            Err(e) => {
+                warn!("[AgentLoop] summary generation failed: {e}");
+                let _ = tx
+                    .send(AgentEvent::Done {
+                        summary: format!("已完成 {max_turns} 轮工具调用，但总结生成失败: {e}"),
+                        artifacts: all_artifacts,
+                    })
+                    .await;
+            }
+        }
+    });
+
+    rx
+}
+
+fn map_artifact_to_tool_kind(kind: &str) -> String {
+    match kind {
+        "document" => "doc",
+        "ppt" => "ppt",
+        "drawio" => "drawio",
+        "sheet" => "excel",
+        "image" => "image",
+        "code" => "code",
+        _ => "general",
+    }
+    .to_string()
+}

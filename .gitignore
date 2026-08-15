@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build output
+dist/
+frontend/dist/
+server/target/
+
+# Runtime data & outputs (anywhere in repo)
+**/data/
+**/outputs/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+Thumbs.db
+
+# Cargo lock (保留二进制项目的 lock)
+# server/Cargo.lock

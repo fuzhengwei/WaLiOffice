@@ -1,0 +1,20 @@
+{
+  "name": "walioffice",
+  "private": true,
+  "version": "0.2.0",
+  "description": "WaLiOffice Web AI Agent - Rust server with embedded React frontend",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,web \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "cd server && cargo run",
+    "dev:web": "cd frontend && npm run dev",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "cd frontend && npm run build",
+    "build:server": "cd server && cargo build --release",
+    "check": "cd server && cargo check",
+    "start": "./server/target/release/walioffice"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}

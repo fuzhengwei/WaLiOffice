@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  walioffice:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - AIPPT_JWT_SECRET=change-me-to-a-long-random-secret
+      - AIPPT_LLM_API_KEY=change-me
+      - AIPPT_LLM_BASE_URL=http://127.0.0.1:8777/v1
+      - AIPPT_LLM_MODEL=gpt-5.5
+      - AIPPT_ADMIN_PASSWORD=admin123
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+    restart: unless-stopped

@@ -1,0 +1,135 @@
+use crate::models::ChatMessage;
+use rusqlite::params;
+use serde::{Deserialize, Serialize};
+use crate::error::AppResult;
+use super::DbPool;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRow {
+    pub id: String,
+    pub owner_id: String,
+    pub project_id: Option<String>,
+    pub tool_kind: Option<String>,
+    pub title: String,
+    pub summary: Option<String>,
+    pub message_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub fn create(pool: &DbPool, owner_id: &str, project_id: Option<&str>, tool_kind: Option<&str>, title: &str) -> AppResult<SessionRow> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO sessions (id, owner_id, project_id, tool_kind, title, message_count, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
+        params![id, owner_id, project_id, tool_kind, title, &now, &now],
+    )?;
+    Ok(SessionRow {
+        id, owner_id: owner_id.to_string(), project_id: project_id.map(String::from),
+        tool_kind: tool_kind.map(String::from), title: title.to_string(),
+        summary: None, message_count: 0, created_at: now.clone(), updated_at: now,
+    })
+}
+
+pub fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<SessionRow>> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let row = conn.query_row(
+        "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, created_at, updated_at
+         FROM sessions WHERE id = ?1",
+        params![id],
+        |row| Ok(SessionRow {
+            id: row.get(0)?, owner_id: row.get(1)?, project_id: row.get(2)?, tool_kind: row.get(3)?,
+            title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?,
+            created_at: row.get(7)?, updated_at: row.get(8)?,
+        }),
+    );
+    match row {
+        Ok(s) => Ok(Some(s)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn list_by_owner(pool: &DbPool, owner_id: &str, limit: i64) -> AppResult<Vec<SessionRow>> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let mut stmt = conn.prepare(
+        "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, created_at, updated_at
+         FROM sessions WHERE owner_id = ?1 ORDER BY updated_at DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![owner_id, limit], |row| Ok(SessionRow {
+        id: row.get(0)?, owner_id: row.get(1)?, project_id: row.get(2)?, tool_kind: row.get(3)?,
+        title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?,
+        created_at: row.get(7)?, updated_at: row.get(8)?,
+    }))?;
+    let mut result = Vec::new();
+    for row in rows { result.push(row?); }
+    Ok(result)
+}
+
+pub fn add_message(pool: &DbPool, session_id: &str, msg: &ChatMessage) -> AppResult<()> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let tool_name: Option<String> = None;
+    let tool_input: Option<String> = msg.tool_calls.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default());
+    let tool_output: Option<String> = msg.tool_call_id.clone();
+    conn.execute(
+        "INSERT INTO messages (id, session_id, role, content, tool_name, tool_input, tool_output, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![id, session_id, msg.role, msg.content, tool_name, tool_input, tool_output, &now],
+    )?;
+    conn.execute(
+        "UPDATE sessions SET message_count = message_count + 1, updated_at = ?1 WHERE id = ?2",
+        params![&now, session_id],
+    )?;
+    Ok(())
+}
+
+pub fn get_messages(pool: &DbPool, session_id: &str, limit: i64) -> AppResult<Vec<ChatMessage>> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let mut stmt = conn.prepare(
+        "SELECT role, content, tool_input, tool_output FROM messages
+         WHERE session_id = ?1 ORDER BY created_at ASC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![session_id, limit], |row| {
+        let role: String = row.get(0)?;
+        let content: String = row.get(1)?;
+        let tool_input: Option<String> = row.get(2)?;
+        let tool_output: Option<String> = row.get(3)?;
+        let tool_calls = tool_input.and_then(|s| serde_json::from_str(&s).ok());
+        let tool_call_id = tool_output;
+        Ok(ChatMessage { role, content, tool_calls, tool_call_id })
+    })?;
+    let mut result = Vec::new();
+    for row in rows { result.push(row?); }
+    Ok(result)
+}
+
+pub fn delete(pool: &DbPool, session_id: &str, owner_id: &str) -> AppResult<bool> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let affected = conn.execute(
+        "DELETE FROM sessions WHERE id = ?1 AND owner_id = ?2",
+        params![session_id, owner_id],
+    )?;
+    Ok(affected > 0)
+}
+
+pub fn clear_messages(pool: &DbPool, session_id: &str, owner_id: &str) -> AppResult<bool> {
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    // 验证所有权
+    let session: Option<String> = conn.query_row(
+        "SELECT id FROM sessions WHERE id = ?1 AND owner_id = ?2",
+        params![session_id, owner_id],
+        |r| r.get(0),
+    ).ok();
+    if session.is_none() { return Ok(false); }
+    conn.execute("DELETE FROM messages WHERE session_id = ?1", params![session_id])?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE sessions SET message_count = 0, updated_at = ?1 WHERE id = ?2",
+        params![&now, session_id],
+    )?;
+    Ok(true)
+}
