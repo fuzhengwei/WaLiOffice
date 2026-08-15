@@ -9,6 +9,57 @@ use super::tool::{ToolContext, ToolResult};
 use crate::llm::FunctionDef;
 use crate::models::{Artifact, ChatMessage};
 
+fn direct_media_tool(allowed_tools: Option<&Vec<String>>) -> Option<&'static str> {
+    let allowed = allowed_tools?;
+    if allowed.len() != 1 {
+        return None;
+    }
+
+    match allowed.first().map(String::as_str) {
+        Some("image_prompt") => Some("image_prompt"),
+        Some("video_generate") => Some("video_generate"),
+        _ => None,
+    }
+}
+
+fn clean_direct_topic(user_message: &str, fallback: &str) -> String {
+    let topic = user_message
+        .split("\n\n用户本次还上传了")
+        .next()
+        .unwrap_or(user_message)
+        .trim();
+
+    if topic.is_empty() {
+        fallback.to_string()
+    } else {
+        topic.to_string()
+    }
+}
+
+fn direct_media_input(
+    tool_name: &str,
+    user_message: &str,
+    user_attachments: &[crate::models::ChatAttachment],
+) -> serde_json::Value {
+    let image_count = user_attachments
+        .iter()
+        .filter(|item| item.kind == "image")
+        .count();
+    let has_image = image_count > 0;
+
+    match tool_name {
+        "image_prompt" => serde_json::json!({
+            "topic": clean_direct_topic(user_message, "基于上传图片生成图片"),
+            "mode": if has_image { "image_to_image" } else { "text_to_image" },
+        }),
+        "video_generate" => serde_json::json!({
+            "topic": clean_direct_topic(user_message, "基于上传图片生成视频"),
+            "mode": if image_count > 1 { "keyframes" } else if has_image { "image_to_video" } else { "text_to_video" },
+        }),
+        _ => serde_json::json!({}),
+    }
+}
+
 /// Agent 事件（通过 channel 向上层推送）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -156,7 +207,8 @@ pub async fn run_agent_loop(
 
         // 获取工具定义
         let all_tools = REGISTRY.list().await;
-        let mut function_defs: Vec<FunctionDef> = if let Some(ref allowed) = config.allowed_tools {
+        let allowed_tool_names = config.allowed_tools.clone();
+        let mut function_defs: Vec<FunctionDef> = if let Some(ref allowed) = allowed_tool_names {
             REGISTRY
                 .to_function_defs()
                 .await
@@ -166,7 +218,9 @@ pub async fn run_agent_loop(
         } else {
             REGISTRY.to_function_defs().await
         };
-        if user_attachments.iter().any(|item| item.kind == "image") {
+        if user_attachments.iter().any(|item| item.kind == "image")
+            && direct_media_tool(allowed_tool_names.as_ref()).is_none()
+        {
             function_defs.clear();
         }
 
@@ -185,12 +239,82 @@ pub async fn run_agent_loop(
         conversation.extend(compacted[hist_start..].to_vec());
         conversation.push(ChatMessage {
             role: "user".to_string(),
-            content: user_message,
+            content: user_message.clone(),
             tool_calls: None,
             tool_call_id: None,
         });
 
         let mut all_artifacts: Vec<Artifact> = Vec::new();
+
+        if let Some(tool_name) = direct_media_tool(allowed_tool_names.as_ref()) {
+            let input = direct_media_input(tool_name, &user_message, &user_attachments);
+            let _ = tx
+                .send(AgentEvent::ToolCall {
+                    tool: tool_name.to_string(),
+                    input: input.clone(),
+                })
+                .await;
+
+            info!("[ToolLog] {} → {}", ctx.session_id, tool_name);
+            let result = match REGISTRY.get(tool_name).await {
+                Some(tool) => tool.call(input, &ctx).await,
+                None => ToolResult::err(format!(
+                    "工具 \"{tool_name}\" 未注册。可用工具: {}",
+                    all_tools
+                        .iter()
+                        .map(|t| t.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            };
+
+            let _ = tx
+                .send(AgentEvent::ToolResult {
+                    tool: tool_name.to_string(),
+                    success: result.success,
+                    result: result.data.clone().unwrap_or(serde_json::Value::Null),
+                    error: result.error.clone(),
+                })
+                .await;
+
+            if result.success {
+                if let Some(artifacts) = &result.artifacts {
+                    for art in artifacts {
+                        let artifact = Artifact {
+                            id: Uuid::new_v4().to_string(),
+                            kind: art.kind.clone(),
+                            tool_kind: map_artifact_to_tool_kind(&art.kind),
+                            title: art.title.clone(),
+                            status: "ready".to_string(),
+                            content: art.content.clone(),
+                            version: 1,
+                            created_at: chrono::Utc::now().to_rfc3339(),
+                            updated_at: chrono::Utc::now().to_rfc3339(),
+                        };
+                        all_artifacts.push(artifact.clone());
+                        let _ = tx.send(AgentEvent::Artifact { artifact }).await;
+                    }
+                }
+            }
+
+            let summary = if result.success {
+                result.observation
+            } else {
+                format!("生成失败：{}", result.observation)
+            };
+            let _ = tx
+                .send(AgentEvent::Message {
+                    content: summary.clone(),
+                })
+                .await;
+            let _ = tx
+                .send(AgentEvent::Done {
+                    summary,
+                    artifacts: all_artifacts,
+                })
+                .await;
+            return;
+        }
 
         for turn in 0..max_turns {
             // 调用 LLM

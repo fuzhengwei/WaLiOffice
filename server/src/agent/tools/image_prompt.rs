@@ -282,16 +282,22 @@ impl OfficeTool for ImagePromptTool {
 - 文案使用英文为主，必要时可夹带品牌名或专有名词
 - 不要输出多余字段"#;
 
+        let reference_guidance = if wants_image_to_image {
+            "参考图约束：必须以用户上传的参考图为首要视觉约束，保持主体身份、脸部特征、年龄感、发型、身体比例、原始构图和关键背景稳定；只修改用户要求的内容。不要换脸、不要新增人物、不要生成乱码文字。\n"
+        } else {
+            ""
+        };
+
         let user_prompt = if styles.is_empty() {
             format!(
-                "需求：{topic}\n场景指导：{scene_guide}\n输出尺寸建议：{}，宽高比 {}\n生成模式：{}\n请给出 3 套差异明确且可直接出图的 Agnes 提示词。",
+                "需求：{topic}\n场景指导：{scene_guide}\n输出尺寸建议：{}，宽高比 {}\n生成模式：{}\n{reference_guidance}请给出 3 套差异明确且可直接出图的 Agnes 提示词。",
                 output_spec.size,
                 output_spec.ratio,
                 if wants_image_to_image { "图生图，基于用户参考图修改或再创作" } else { "文生图" }
             )
         } else {
             format!(
-                "需求：{topic}\n场景指导：{scene_guide}\n输出尺寸建议：{}，宽高比 {}\n生成模式：{}\n指定风格：{}\n请优先按这些风格输出 3 套可直接出图的 Agnes 提示词。",
+                "需求：{topic}\n场景指导：{scene_guide}\n输出尺寸建议：{}，宽高比 {}\n生成模式：{}\n{reference_guidance}指定风格：{}\n请优先按这些风格输出 3 套可直接出图的 Agnes 提示词。",
                 output_spec.size,
                 output_spec.ratio,
                 if wants_image_to_image { "图生图，基于用户参考图修改或再创作" } else { "文生图" },
@@ -444,15 +450,28 @@ impl OfficeTool for ImagePromptTool {
             let fallback_prompt = format!(
                 "Create a clear, high quality image for this user request: {topic}. Use a simple strong composition, recognizable main subject, polished lighting, and appealing visual details."
             );
-            let fallback_body = json!({
-                "model": AGNES_IMAGE_MODEL,
-                "prompt": fallback_prompt,
-                "size": "1K",
-                "ratio": "1:1",
-                "extra_body": {
-                    "response_format": "url"
-                }
-            });
+            let fallback_body = if wants_image_to_image {
+                json!({
+                    "model": AGNES_IMAGE_MODEL,
+                    "prompt": fallback_prompt,
+                    "size": output_spec.size,
+                    "ratio": output_spec.ratio,
+                    "extra_body": {
+                        "response_format": "url",
+                        "image": image_inputs.clone()
+                    }
+                })
+            } else {
+                json!({
+                    "model": AGNES_IMAGE_MODEL,
+                    "prompt": fallback_prompt,
+                    "size": "1K",
+                    "ratio": "1:1",
+                    "extra_body": {
+                        "response_format": "url"
+                    }
+                })
+            };
             match generate_agnes_image(&client, &endpoint, &credentials.api_key, &fallback_body)
                 .await
             {

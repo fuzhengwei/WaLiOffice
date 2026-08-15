@@ -612,8 +612,8 @@ export default function Studio() {
     const hits: ToolKind[] = []
     const hasImageAttachment = pendingAttachments.some((item) => item.kind === 'image')
     const hasImageRecognitionIntent = /这是什么|识别|识图|看图|帮我看看|图里|图片里|截图里|读图|ocr|提取文字|解析图片|说明图片|分析图片|描述图片/.test(lower)
-    const hasImageGenerationIntent = /生成.*图|做.*图|画.*图|出图|海报|封面|logo|配图|主视觉|插画|banner|视觉稿|图像创作/.test(lower)
-    const hasVideoGenerationIntent = /生成.*视频|做.*视频|制作.*视频|短片|短视频|宣传片|动画|视频广告|片头|转场|动态海报|mv|motion/.test(lower)
+    const hasImageGenerationIntent = /生成.*图|做.*图|画.*图|出图|图生图|以图生图|基于.*图.*图|参考.*图.*图|基于图片|基于这张图|基于这个图|基于照片|参考图片|参考这张图|用这张图|按照这张图|改图|修图|重绘|换风格|换背景|换衣服|换装|变装|换发型|去除背景|抠图|扩图|其他穿着|穿着|衣服|服装|造型|换成|改成|海报|封面|logo|配图|主视觉|插画|banner|视觉稿|图像创作/.test(lower)
+    const hasVideoGenerationIntent = /生成.*视频|做.*视频|制作.*视频|图生视频|以图生视频|基于.*图.*视频|参考.*图.*视频|让.*图.*动|让.*照片.*动|动起来|动态化|短片|短视频|宣传片|动画|视频广告|片头|转场|动态海报|mv|motion/.test(lower)
 
     if (/draw\.io|drawio|流程图|架构图|泳道图|拓扑图|er图/.test(lower)) hits.push('drawio')
     if (/excel|xlsx|表格|数据分析|公式|在线表/.test(lower)) hits.push('excel')
@@ -623,6 +623,7 @@ export default function Studio() {
     if (hasVideoGenerationIntent || /视频|video/.test(lower)) hits.push('video')
     const wantsMultiple = /同时|一起|并且|再来|外加|附上|配一张|再补一个|多个|一套/.test(lower)
     const uniqueHits = Array.from(new Set(hits))
+    if (uniqueHits.includes('video') && uniqueHits.includes('image') && hasVideoGenerationIntent && !wantsMultiple) return 'video'
     if (hasImageAttachment && !hasImageGenerationIntent) return 'general'
     if (uniqueHits.length > 1 || (wantsMultiple && uniqueHits.length > 0)) return 'general'
     if (uniqueHits.length === 1) return uniqueHits[0]

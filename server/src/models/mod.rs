@@ -81,6 +81,11 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct VerificationLoginRequest {
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RegisterRequest {
     pub username: String,
     pub password: String,

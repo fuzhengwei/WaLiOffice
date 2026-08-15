@@ -319,8 +319,13 @@ impl OfficeTool for VideoGenerateTool {
 - aspect_ratio 只能输出 16:9 / 9:16 / 1:1 / 4:3 / 3:4
 - duration 只能输出 short / standard / long / max"#;
 
+        let reference_guidance = if image_inputs.is_empty() {
+            "无参考图，请按文生视频生成完整动态画面。"
+        } else {
+            "有参考图：必须以参考图为首要视觉约束，保持主体身份、脸部特征、发型、服装主体、构图和关键背景稳定，只设计自然小幅动作与镜头运动；不要换脸、不要新增人物、不要重构场景。"
+        };
         let user_prompt = format!(
-            "需求：{topic}\n期望宽高比：{requested_aspect_ratio}\n期望时长档位：{duration}\n生成模式：{generation_mode}\n参考图片数量：{}\n请输出一套可直接用于 Agnes Video V2.0 的高质量视频生成方案。",
+            "需求：{topic}\n期望宽高比：{requested_aspect_ratio}\n期望时长档位：{duration}\n生成模式：{generation_mode}\n参考图片数量：{}\n参考图约束：{reference_guidance}\n请输出一套可直接用于 Agnes Video V2.0 的高质量视频生成方案。",
             image_inputs.len()
         );
 

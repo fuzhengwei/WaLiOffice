@@ -167,6 +167,119 @@ fn build_user_message(req: &ChatRequest) -> String {
     }
 }
 
+fn allowed_tools_for_kind(tool_kind: Option<&str>) -> Option<Vec<String>> {
+    match tool_kind {
+        Some("image") => Some(vec!["image_prompt".to_string()]),
+        Some("video") => Some(vec!["video_generate".to_string()]),
+        _ => None,
+    }
+}
+
+fn contains_any(text: &str, keywords: &[&str]) -> bool {
+    keywords.iter().any(|keyword| text.contains(keyword))
+}
+
+fn has_image_attachment(req: &ChatRequest) -> bool {
+    req.attachments
+        .as_deref()
+        .map(|items| items.iter().any(|item| item.kind == "image"))
+        .unwrap_or(false)
+}
+
+fn infer_media_tool_kind(req: &ChatRequest) -> Option<String> {
+    match req.tool_kind.as_deref() {
+        Some("image") | Some("video") => return req.tool_kind.clone(),
+        _ => {}
+    }
+
+    if !has_image_attachment(req) {
+        return None;
+    }
+
+    let text = req.message.trim().to_lowercase();
+    if contains_any(
+        &text,
+        &[
+            "生成视频",
+            "做视频",
+            "制作视频",
+            "图生视频",
+            "以图生视频",
+            "短视频",
+            "短片",
+            "宣传片",
+            "动画",
+            "动起来",
+            "动态化",
+            "动态海报",
+            "motion",
+            "video",
+        ],
+    ) {
+        return Some("video".to_string());
+    }
+
+    let image_intent = contains_any(
+        &text,
+        &[
+            "生成图片",
+            "做图片",
+            "画图",
+            "出图",
+            "图生图",
+            "以图生图",
+            "改图",
+            "修图",
+            "重绘",
+            "换风格",
+            "换背景",
+            "换衣服",
+            "换装",
+            "变装",
+            "换发型",
+            "去除背景",
+            "抠图",
+            "扩图",
+            "其他穿着",
+            "穿着",
+            "衣服",
+            "服装",
+            "造型",
+            "换成",
+            "改成",
+            "海报",
+            "封面",
+            "配图",
+            "主视觉",
+            "插画",
+            "banner",
+            "视觉稿",
+        ],
+    );
+    let reference_image_cue = contains_any(
+        &text,
+        &[
+            "基于图片",
+            "基于这张图",
+            "基于这个图",
+            "基于照片",
+            "参考图片",
+            "参考这张图",
+            "用这张图",
+            "按照这张图",
+            "上传图片",
+            "这张图片",
+            "这张照片",
+        ],
+    );
+
+    if image_intent || (reference_image_cue && !text.is_empty()) {
+        Some("image".to_string())
+    } else {
+        None
+    }
+}
+
 fn merge_session_artifacts(existing: Vec<Artifact>, current_turn: Vec<Artifact>) -> Vec<Artifact> {
     let mut merged = existing;
 
@@ -186,6 +299,7 @@ async fn chat_stream(
     Json(req): Json<ChatRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let pool = state::db_pool();
+    let resolved_tool_kind = infer_media_tool_kind(&req).or_else(|| req.tool_kind.clone());
     let client = std::sync::Arc::new(crate::llm::LlmClient::for_user(
         &user.0.id,
         req.model.as_deref(),
@@ -209,7 +323,7 @@ async fn chat_stream(
             &pool,
             &user.0.id,
             req.project_id.as_deref(),
-            req.tool_kind.as_deref(),
+            resolved_tool_kind.as_deref(),
             &title,
         )?
     };
@@ -239,7 +353,7 @@ async fn chat_stream(
     let agent_config = AgentConfig {
         max_turns: 6,
         system_prompt: String::new(), // 使用默认 OFFICE_AGENT_PROMPT
-        allowed_tools: None,
+        allowed_tools: allowed_tools_for_kind(resolved_tool_kind.as_deref()),
     };
 
     // 创建 tool context 的 emit 回调
@@ -283,7 +397,7 @@ async fn chat_stream(
         client.clone(),
     )
     .await;
-    let requested_tool_kind = req.tool_kind.clone();
+    let requested_tool_kind = resolved_tool_kind.clone();
 
     tokio::spawn(async move {
         let mut final_summary = String::new();

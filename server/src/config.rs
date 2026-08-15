@@ -9,6 +9,7 @@ pub struct Config {
 
     pub jwt_secret: String,
     pub jwt_expiry_hours: i64,
+    pub x_api_auth_login_url: String,
 
     pub llm_base_url: String,
     pub llm_api_key: String,
@@ -47,6 +48,10 @@ impl Config {
 
             jwt_secret,
             jwt_expiry_hours: env_or("AIPPT_JWT_EXPIRY_HOURS", "24").parse().unwrap_or(24),
+            x_api_auth_login_url: env_or(
+                "WALIOFFICE_X_API_AUTH_LOGIN_URL",
+                "https://x-api.itedus.cn/api/v1/auth/login",
+            ),
 
             llm_base_url: env_or("AIPPT_LLM_BASE_URL", "http://127.0.0.1:8777/v1"),
             llm_api_key,

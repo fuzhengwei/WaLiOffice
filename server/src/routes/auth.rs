@@ -1,17 +1,19 @@
-use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::auth::middleware::AuthUser;
 use crate::db::user_repo;
 use crate::error::AppError;
-use crate::models::{LoginRequest, RegisterRequest, TokenResponse};
+use crate::models::{LoginRequest, RegisterRequest, TokenResponse, VerificationLoginRequest};
 use crate::state;
 
 pub fn router() -> Router {
     Router::new()
         .route("/api/auth/login", post(login))
+        .route("/api/auth/verification-login", post(verification_login))
         .route("/api/auth/register", post(register))
         .route("/api/auth/me", get(me))
         .route("/api/auth/demo-accounts", get(demo_accounts))
@@ -32,6 +34,68 @@ async fn login(Json(req): Json<LoginRequest>) -> Result<Json<TokenResponse>, App
         token_type: "bearer".into(),
         user,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+struct XApiLoginResponse {
+    code: String,
+    #[serde(default)]
+    info: String,
+    #[serde(default)]
+    data: Option<String>,
+}
+
+async fn verification_login(
+    Json(req): Json<VerificationLoginRequest>,
+) -> Result<Json<TokenResponse>, AppError> {
+    let code = req.code.trim();
+    if code.is_empty() {
+        return Err(AppError::BadRequest("请输入验证码".into()));
+    }
+
+    let cfg = crate::config::config();
+    let resp = reqwest::Client::new()
+        .post(&cfg.x_api_auth_login_url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&[("code", code)])
+        .send()
+        .await
+        .map_err(|_| AppError::BadRequest("验证码服务暂不可用".into()))?;
+
+    let result = resp
+        .json::<XApiLoginResponse>()
+        .await
+        .map_err(|_| AppError::BadRequest("验证码服务响应异常".into()))?;
+
+    if result.code != "0000" {
+        return Err(AppError::BadRequest(if result.info.is_empty() {
+            "验证码无效或已过期".into()
+        } else {
+            result.info
+        }));
+    }
+
+    let pool = state::db_pool();
+    let external_id = result
+        .data
+        .as_deref()
+        .and_then(extract_openid_from_x_api_token)
+        .unwrap_or_else(|| code.to_string());
+    let user = user_repo::find_or_create_external(&pool, &format!("wx_{external_id}"))?;
+    let token = crate::auth::create_token(&user)?;
+
+    Ok(Json(TokenResponse {
+        access_token: token,
+        token_type: "bearer".into(),
+        user,
+    }))
+}
+
+fn extract_openid_from_x_api_token(token: &str) -> Option<String> {
+    let payload = token.split('.').nth(1)?;
+    let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    value.get("openId")?.as_str().map(ToString::to_string)
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> Result<Json<TokenResponse>, AppError> {

@@ -57,6 +57,25 @@ pub fn create(
     password_hash: &str,
 ) -> AppResult<User> {
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    create_with_conn(&conn, username, email, password_hash)
+}
+
+pub fn find_or_create_external(pool: &DbPool, username: &str) -> AppResult<User> {
+    if let Some((user, _)) = find_by_username(pool, username)? {
+        return Ok(user);
+    }
+
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let password_hash = hash_password(&uuid::Uuid::new_v4().to_string())?;
+    create_with_conn(&conn, username, None, &password_hash)
+}
+
+fn create_with_conn(
+    conn: &rusqlite::Connection,
+    username: &str,
+    email: Option<&str>,
+    password_hash: &str,
+) -> AppResult<User> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
