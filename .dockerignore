@@ -38,7 +38,7 @@ npm-debug.log*
 
 # Docker 自身文件
 Dockerfile
-docker-compose.yml
+docker-compose-walioffice.yml
 .dockerignore
 build.sh
 push.sh

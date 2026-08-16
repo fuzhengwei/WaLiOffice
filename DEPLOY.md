@@ -34,7 +34,7 @@ sudo systemctl enable docker && sudo systemctl start docker
 # 2. 创建部署目录
 mkdir -p /opt/walioffice && cd /opt/walioffice
 
-# 3. 创建 docker-compose.yml（从仓库复制或手写）
+# 3. 创建 docker-compose-walioffice.yml（从仓库复制或手写）
 # 4. 创建 .env 文件
 cp .env.production .env  # 如果有模板
 vim .env                 # 修改以下关键配置:

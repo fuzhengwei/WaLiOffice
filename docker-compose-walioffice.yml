@@ -8,7 +8,7 @@ version: "3.8"
 
 services:
   walioffice:
-    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/walioffice
+    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/walioffice:1.0
     container_name: walioffice
     ports:
       - "8000:8000"
@@ -59,7 +59,7 @@ services:
       AIPPT_RENDER_OUTPUT_DIR: outputs
 
       # ── CORS（改成你的域名或服务器 IP）──
-      AIPPT_CORS_ORIGINS: http://180.76.188.127:5173,http://180.76.188.127:8000
+      AIPPT_CORS_ORIGINS: https://walioffice.xiaofuge.cn,http://180.76.188.127:5173,http://180.76.188.127:8000
 
     security_opt:
       - seccomp:unconfined
