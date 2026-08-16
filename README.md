@@ -39,7 +39,21 @@ WaLiOffice/
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填写 AIPPT_JWT_SECRET 和 AIPPT_LLM_API_KEY
+# 编辑 .env，填写 AIPPT_JWT_SECRET、AIPPT_LLM_API_KEY 和 Agnes 配置
+```
+
+常用启动配置：
+
+```bash
+AIPPT_JWT_SECRET=change-me-to-a-long-random-secret
+AIPPT_LLM_API_KEY=your-llm-key
+AIPPT_LLM_BASE_URL=http://127.0.0.1:8777/v1
+AIPPT_LLM_MODEL=gpt-5.5
+
+# Agnes 图像/视频服务，可配置多组 url|key，服务端会按请求轮询使用
+WALIOFFICE_AGNES_ENDPOINTS="https://apihub.agnes-ai.com|key-1;https://apihub.agnes-ai.com|key-2"
+WALIOFFICE_AGNES_IMAGE_MODEL=agnes-image-2.1-flash
+WALIOFFICE_AGNES_VIDEO_MODEL=agnes-video-v2.0
 ```
 
 ### 2. 本地开发
@@ -104,7 +118,7 @@ docker compose up -d
 | `image_prompt` | 生成图片提示词 |
 | `video_generate` | 生成视频，远程服务失败时本地合成 MP4 兜底 |
 
-## 默认账号
+## 登录说明
 
-- 用户名：`admin`
-- 密码：`admin123`（可通过 `AIPPT_ADMIN_PASSWORD` 环境变量修改）
+- 平台保留普通账号登录、注册和验证码登录。
+- 管理后台已暂时移除，启动时不再创建默认管理员账号。

@@ -8,7 +8,7 @@ use crate::agent::tool::{OfficeTool, ToolArtifact, ToolContext, ToolResult};
 use crate::llm::LlmClient;
 use crate::models::{ChatAttachment, ChatMessage};
 
-use super::agnes_media::{http_client, post_json_url, resolve_credentials, AGNES_IMAGE_MODEL};
+use super::agnes_media::{agnes_image_model, http_client, post_json_url, resolve_image_credentials, AgnesCredentials};
 
 pub struct ImagePromptTool;
 
@@ -133,12 +133,12 @@ fn image_src_from_response(image: &AgnesImageData) -> Option<String> {
 async fn generate_agnes_image(
     client: &reqwest::Client,
     endpoint: &str,
-    api_key: &str,
+    credentials: &AgnesCredentials,
     body: &serde_json::Value,
 ) -> Result<AgnesImageResponse, String> {
     let mut latest_error = String::new();
     for attempt in 1..=2 {
-        match post_json_url::<AgnesImageResponse>(client, endpoint, api_key, body).await {
+        match post_json_url::<AgnesImageResponse>(client, endpoint, credentials, body).await {
             Ok(response) => return Ok(response),
             Err(err) => {
                 latest_error = err.to_string();
@@ -340,10 +340,11 @@ impl OfficeTool for ImagePromptTool {
             Err(err) => return ToolResult::err(err),
         };
 
-        let credentials = match resolve_credentials(&ctx.user_id) {
+        let credentials = match resolve_image_credentials(&ctx.user_id) {
             Ok(credentials) => credentials,
             Err(err) => return ToolResult::err(err.to_string()),
         };
+        let image_model = agnes_image_model();
         let endpoint = credentials.endpoint("/v1/images/generations");
         let client = match http_client(Duration::from_secs(240)) {
             Ok(client) => client,
@@ -372,7 +373,7 @@ impl OfficeTool for ImagePromptTool {
 
             let request_body = if wants_image_to_image {
                 json!({
-                    "model": AGNES_IMAGE_MODEL,
+                    "model": image_model.as_str(),
                     "prompt": variant.prompt,
                     "size": output_spec.size,
                     "ratio": output_spec.ratio,
@@ -383,7 +384,7 @@ impl OfficeTool for ImagePromptTool {
                 })
             } else {
                 json!({
-                    "model": AGNES_IMAGE_MODEL,
+                    "model": image_model.as_str(),
                     "prompt": variant.prompt,
                     "size": output_spec.size,
                     "ratio": output_spec.ratio,
@@ -394,7 +395,7 @@ impl OfficeTool for ImagePromptTool {
             };
 
             let response =
-                match generate_agnes_image(&client, &endpoint, &credentials.api_key, &request_body)
+                match generate_agnes_image(&client, &endpoint, &credentials, &request_body)
                     .await
                 {
                     Ok(response) => response,
@@ -452,7 +453,7 @@ impl OfficeTool for ImagePromptTool {
             );
             let fallback_body = if wants_image_to_image {
                 json!({
-                    "model": AGNES_IMAGE_MODEL,
+                    "model": image_model.as_str(),
                     "prompt": fallback_prompt,
                     "size": output_spec.size,
                     "ratio": output_spec.ratio,
@@ -463,7 +464,7 @@ impl OfficeTool for ImagePromptTool {
                 })
             } else {
                 json!({
-                    "model": AGNES_IMAGE_MODEL,
+                    "model": image_model.as_str(),
                     "prompt": fallback_prompt,
                     "size": "1K",
                     "ratio": "1:1",
@@ -472,7 +473,7 @@ impl OfficeTool for ImagePromptTool {
                     }
                 })
             };
-            match generate_agnes_image(&client, &endpoint, &credentials.api_key, &fallback_body)
+            match generate_agnes_image(&client, &endpoint, &credentials, &fallback_body)
                 .await
             {
                 Ok(response) => {
@@ -532,7 +533,7 @@ impl OfficeTool for ImagePromptTool {
                     "images": generated_images,
                     "variants": generated_variants,
                     "provider": "agnes",
-                    "model": AGNES_IMAGE_MODEL,
+                    "model": image_model,
                 }),
             }],
         )

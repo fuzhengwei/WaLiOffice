@@ -130,6 +130,14 @@ CREATE TABLE IF NOT EXISTS user_settings (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+-- 系统设置表
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
 CREATE INDEX IF NOT EXISTS idx_projects_kind ON projects(tool_kind);

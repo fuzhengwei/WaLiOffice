@@ -9,7 +9,6 @@ pub mod notification;
 pub mod project;
 pub mod session;
 pub mod settings;
-pub mod task;
 
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
@@ -26,7 +25,6 @@ pub fn build_router() -> Router {
         .merge(chat::router())
         .merge(session::router())
         .merge(project::router())
-        .merge(task::router())
         .merge(notification::router())
         .merge(settings::router())
         .merge(file::router())

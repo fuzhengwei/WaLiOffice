@@ -21,6 +21,7 @@ export interface LLMProfile {
   id: string;
   name: string;
   base_url: string;
+  api_keys?: string[];
   models: string[];
   default_model: string;
   api_key?: string;
@@ -195,6 +196,7 @@ export interface User {
   username: string;
   email?: string;
   avatar?: string;
+  role?: string;
 }
 
 export interface TokenResponse {
@@ -220,28 +222,6 @@ export interface AgentTraceEvent {
 export interface ChatSSEEvent {
   event: 'message' | 'slide_update' | 'project_update' | 'artifact_update' | 'tool_result' | 'state_update' | 'done' | 'error';
   data: any;
-}
-
-// ===== 任务管理 =====
-export interface Task {
-  id: string;
-  title: string;
-  description?: string;
-  status: 'todo' | 'in_progress' | 'done' | 'archived';
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  due_date?: string;
-  project_id?: string;
-  tags?: string[];
-  order: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface TaskStats {
-  by_status: Record<string, number>;
-  by_priority: Record<string, number>;
-  due_soon: number;
-  total: number;
 }
 
 // ===== 文件管理 =====
@@ -275,7 +255,7 @@ export interface FileStats {
 // ===== 通知 =====
 export interface Notification {
   id: string;
-  type: 'system' | 'task' | 'project' | 'message';
+  type: 'system' | 'project' | 'message';
   title: string;
   content?: string;
   is_read: boolean;
@@ -283,26 +263,3 @@ export interface Notification {
   created_at: string;
 }
 
-// ===== Dashboard =====
-export interface DashboardStats {
-  tasks: {
-    total: number;
-    by_status: Record<string, number>;
-    by_priority: Record<string, number>;
-    due_soon: number;
-  };
-  projects: {
-    total: number;
-    by_kind: Record<string, number>;
-  };
-  files: {
-    total: number;
-    by_type: Record<string, number>;
-    total_size: number;
-  };
-  notifications: {
-    unread: number;
-  };
-  recent_sessions: any[];
-  recent_projects: any[];
-}

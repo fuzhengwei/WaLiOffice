@@ -2,16 +2,13 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::sync::Mutex;
 use std::time::Duration;
-
-pub const AGNES_API_BASE: &str = "https://apihub.agnes-ai.com";
-pub const AGNES_IMAGE_MODEL: &str = "agnes-image-2.1-flash";
-pub const AGNES_VIDEO_MODEL: &str = "agnes-video-v2.0";
 
 #[derive(Debug, Clone)]
 pub struct AgnesCredentials {
     pub base_url: String,
-    pub api_key: String,
+    pub api_keys: Vec<String>,
 }
 
 impl AgnesCredentials {
@@ -25,100 +22,239 @@ impl AgnesCredentials {
             format!("{base}{path}")
         }
     }
-}
 
-pub fn resolve_credentials(user_id: &str) -> Result<AgnesCredentials> {
-    let pool = crate::state::db_pool();
-    if let Ok(Some(settings)) = crate::db::settings_repo::find_by_user(&pool, user_id) {
-        if let Some(profile) = settings
-            .llm_profiles
-            .iter()
-            .find(|item| item.id == settings.active_profile_id)
-        {
-            if let Some(api_key) = profile
-                .api_key
-                .as_ref()
-                .map(|item| item.trim())
-                .filter(|item| !item.is_empty())
-            {
-                let base_url = if profile.base_url.trim().is_empty() {
-                    crate::config::config().llm_base_url.trim().to_string()
-                } else {
-                    profile.base_url.trim().to_string()
-                };
-                return Ok(AgnesCredentials {
-                    base_url,
-                    api_key: api_key.to_string(),
-                });
-            }
+    /// Round-robin 选一个 Key；只有一个就直接返回
+    pub fn pick_key(&self, scope: &str) -> Option<String> {
+        if self.api_keys.is_empty() {
+            return None;
         }
+        if self.api_keys.len() == 1 {
+            return Some(self.api_keys[0].clone());
+        }
+        let cursor = AGNES_KEY_CURSOR
+            .lock()
+            .ok()
+            .and_then(|mut map| {
+                let entry = map.entry(scope.to_string()).or_insert(0usize);
+                let start = *entry % self.api_keys.len();
+                *entry = (*entry + 1) % self.api_keys.len();
+                Some(start)
+            })
+            .unwrap_or(0);
+        Some(self.api_keys[cursor].clone())
     }
 
-    let config = crate::config::config();
-    let api_key = config.llm_api_key.trim().to_string();
-    if api_key.is_empty() {
-        Err(anyhow!("当前模型服务未配置 Agnes 可用的 API Key"))
-    } else {
-        Ok(AgnesCredentials {
-            base_url: config.llm_base_url.trim().to_string(),
-            api_key,
-        })
+    /// 按 round-robin 顺序返回所有 Key（用于失败重试）
+    pub fn ordered_keys(&self, scope: &str) -> Vec<String> {
+        if self.api_keys.len() <= 1 {
+            return self.api_keys.clone();
+        }
+        let start = AGNES_KEY_CURSOR
+            .lock()
+            .ok()
+            .and_then(|mut map| {
+                let entry = map.entry(scope.to_string()).or_insert(0usize);
+                let s = *entry % self.api_keys.len();
+                *entry = (*entry + 1) % self.api_keys.len();
+                Some(s)
+            })
+            .unwrap_or(0);
+        self.api_keys
+            .iter()
+            .cycle()
+            .skip(start)
+            .take(self.api_keys.len())
+            .cloned()
+            .collect()
     }
 }
 
-pub fn resolve_api_key(user_id: &str) -> Result<String> {
-    Ok(resolve_credentials(user_id)?.api_key)
+static AGNES_KEY_CURSOR: Lazy<Mutex<std::collections::HashMap<String, usize>>> =
+    Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
+
+use once_cell::sync::Lazy;
+
+pub fn resolve_image_credentials(_user_id: &str) -> Result<AgnesCredentials> {
+    let config = crate::config::config();
+    credentials_from_config(
+        &config.llm_image_base_url,
+        &config.llm_image_api_keys,
+        &config.llm_image_api_key,
+        "图片",
+    )
+}
+
+pub fn resolve_video_credentials(_user_id: &str) -> Result<AgnesCredentials> {
+    let config = crate::config::config();
+    credentials_from_config(
+        &config.llm_video_base_url,
+        &config.llm_video_api_keys,
+        &config.llm_video_api_key,
+        "视频",
+    )
+}
+
+fn credentials_from_config(
+    base_url: &str,
+    api_keys: &[String],
+    fallback_api_key: &str,
+    kind: &str,
+) -> Result<AgnesCredentials> {
+    let base_url = base_url.trim();
+    if base_url.is_empty() {
+        return Err(anyhow!("未配置 {kind} 模型的 BASE_URL"));
+    }
+
+    let mut keys: Vec<String> = api_keys
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // 去重
+    keys.dedup();
+
+    if keys.is_empty() {
+        let fallback = fallback_api_key.trim();
+        if fallback.is_empty() {
+            return Err(anyhow!("未配置 {kind} 模型的 API_KEY"));
+        }
+        keys.push(fallback.to_string());
+    }
+
+    Ok(AgnesCredentials {
+        base_url: base_url.to_string(),
+        api_keys: keys,
+    })
+}
+
+pub fn agnes_image_model() -> String {
+    crate::config::config().llm_image_model.trim().to_string()
+}
+
+pub fn agnes_video_model() -> String {
+    crate::config::config().llm_video_model.trim().to_string()
 }
 
 pub fn http_client(timeout: Duration) -> Result<Client> {
     Ok(Client::builder().timeout(timeout).build()?)
 }
 
+fn should_retry_agnes(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::UNAUTHORIZED
+        || status == reqwest::StatusCode::FORBIDDEN
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
+/// 带 API Key 负载均衡的 POST 请求
 pub async fn post_json<T: DeserializeOwned>(
     client: &Client,
-    path: &str,
-    api_key: &str,
+    url: &str,
+    credentials: &AgnesCredentials,
     body: &Value,
 ) -> Result<T> {
-    let url = format!("{AGNES_API_BASE}{path}");
-    post_json_url(client, &url, api_key, body).await
+    post_json_url(client, url, credentials, body).await
 }
 
 pub async fn post_json_url<T: DeserializeOwned>(
     client: &Client,
     url: &str,
-    api_key: &str,
+    credentials: &AgnesCredentials,
     body: &Value,
 ) -> Result<T> {
-    let response = client
-        .post(url)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .header("Content-Type", "application/json")
-        .json(body)
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
-        return Err(anyhow!("Agnes API 返回错误 {status}: {detail}"));
+    let keys = credentials.ordered_keys("agnes-post");
+    if keys.is_empty() {
+        return Err(anyhow!("Agnes API 未配置可用 API Key"));
     }
 
-    Ok(response.json::<T>().await?)
+    let mut last_error: Option<anyhow::Error> = None;
+
+    for (index, api_key) in keys.iter().enumerate() {
+        let response = client
+            .post(url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let detail = resp.text().await.unwrap_or_default();
+                    let err = anyhow!("Agnes API 返回错误 {status}: {detail}");
+                    if should_retry_agnes(status) && index + 1 < keys.len() {
+                        tracing::warn!(
+                            "Agnes API key {} failed with {status}, retrying next key",
+                            index
+                        );
+                        last_error = Some(err);
+                        continue;
+                    }
+                    return Err(err);
+                }
+                return Ok(resp.json::<T>().await?);
+            }
+            Err(err) => {
+                last_error = Some(err.into());
+                if index + 1 < keys.len() {
+                    continue;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("Agnes API 请求失败")))
 }
 
-pub async fn get_json<T: DeserializeOwned>(client: &Client, url: &str, api_key: &str) -> Result<T> {
-    let response = client
-        .get(url)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
-        return Err(anyhow!("Agnes API 返回错误 {status}: {detail}"));
+/// 带 API Key 负载均衡的 GET 请求
+pub async fn get_json<T: DeserializeOwned>(
+    client: &Client,
+    url: &str,
+    credentials: &AgnesCredentials,
+) -> Result<T> {
+    let keys = credentials.ordered_keys("agnes-get");
+    if keys.is_empty() {
+        return Err(anyhow!("Agnes API 未配置可用 API Key"));
     }
 
-    Ok(response.json::<T>().await?)
+    let mut last_error: Option<anyhow::Error> = None;
+
+    for (index, api_key) in keys.iter().enumerate() {
+        let response = client
+            .get(url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let detail = resp.text().await.unwrap_or_default();
+                    let err = anyhow!("Agnes API 返回错误 {status}: {detail}");
+                    if should_retry_agnes(status) && index + 1 < keys.len() {
+                        tracing::warn!(
+                            "Agnes API key {} failed with {status}, retrying next key",
+                            index
+                        );
+                        last_error = Some(err);
+                        continue;
+                    }
+                    return Err(err);
+                }
+                return Ok(resp.json::<T>().await?);
+            }
+            Err(err) => {
+                last_error = Some(err.into());
+                if index + 1 < keys.len() {
+                    continue;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("Agnes API 请求失败")))
 }

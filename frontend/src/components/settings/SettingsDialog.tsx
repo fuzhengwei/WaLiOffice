@@ -3,8 +3,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
 import type { AppSettings, LLMProfile, MCPServiceConfig } from '@/types'
 
-const DEFAULT_MODELS = ['glm_for_coding', 'agnes-2.0-flash', 'agnes-2.5-flash', 'agnes-image-2.1-flash', 'agnes-video-v2.0']
-
 interface SettingsDialogProps {
   open: boolean
   settings: AppSettings | null
@@ -17,9 +15,18 @@ const emptyProfile = (): LLMProfile => ({
   name: '新的模型服务',
   base_url: 'http://127.0.0.1:8777/v1',
   api_key: '',
-  models: DEFAULT_MODELS,
-  default_model: 'glm_for_coding',
+  api_keys: [],
+  models: [],
+  default_model: '',
 })
+
+function getProfileKeys(profile: LLMProfile) {
+  const keys = Array.isArray(profile.api_keys) ? profile.api_keys : []
+  const merged = [...keys, profile.api_key || '']
+    .map((item) => item.trim())
+    .filter(Boolean)
+  return Array.from(new Set(merged))
+}
 
 const emptyMcpServer = (): MCPServiceConfig => ({
   id: `mcp-${Date.now()}`,
@@ -230,7 +237,7 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                           />
                           <div className="mt-1 flex items-center gap-2 text-[11px] text-surface-400">
                             <KeyRound className="h-3 w-3" />
-                            {profile.has_api_key || profile.api_key ? 'API Key 已配置' : 'API Key 未配置'}
+                            Key 池 {getProfileKeys(profile).length} 个
                           </div>
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -262,13 +269,16 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                           />
                         </label>
                         <label className="block text-xs font-semibold text-surface-500">
-                          API Key
-                          <input
-                            value={profile.api_key || ''}
-                            onChange={(event) => updateProfile(profile.id, { api_key: event.target.value, has_api_key: !!event.target.value })}
-                            type="password"
-                            placeholder={profile.has_api_key ? '已保存，重新输入可覆盖' : 'sk-...'}
-                            className="mt-1.5 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm text-surface-900 outline-none focus:border-surface-500"
+                          API Key 池（每行一个，按请求轮询负载）
+                          <textarea
+                            value={getProfileKeys(profile).join('\n')}
+                            onChange={(event) => {
+                              const apiKeys = event.target.value.split('\n').map((item) => item.trim()).filter(Boolean)
+                              updateProfile(profile.id, { api_keys: apiKeys, api_key: '', has_api_key: apiKeys.length > 0 })
+                            }}
+                            rows={4}
+                            placeholder="sk-..."
+                            className="mt-1.5 w-full resize-y rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-xs text-surface-900 outline-none focus:border-surface-500"
                           />
                         </label>
                         <label className="block text-xs font-semibold text-surface-500">

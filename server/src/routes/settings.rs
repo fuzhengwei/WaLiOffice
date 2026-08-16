@@ -1,4 +1,4 @@
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
@@ -10,31 +10,24 @@ use crate::state;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 
-const BUILTIN_MODELS: &[&str] = &[
-    "agnes-2.0-flash",
-    "agnes-2.5-flash",
-    "agnes-image-2.1-flash",
-    "agnes-video-v2.0",
-];
-
 pub fn router() -> Router {
     Router::new()
         .route("/api/settings", get(get_settings).put(save_settings))
         .route("/api/settings/mcp/test", post(test_mcp_service))
 }
 
-fn default_settings() -> AppSettings {
+pub fn default_settings() -> AppSettings {
     let cfg = crate::config::config();
-    let mut models = vec![cfg.llm_model.clone()];
-    for model in BUILTIN_MODELS {
-        if !models.iter().any(|item| item == model) {
-            models.push((*model).to_string());
-        }
-    }
+    let models = configured_models(cfg);
     let default_profile = LlmProfileConfig {
         id: "default".into(),
         name: "默认模型服务".into(),
         base_url: cfg.llm_base_url.clone(),
+        api_keys: if cfg.llm_api_key.trim().is_empty() {
+            vec![]
+        } else {
+            vec![cfg.llm_api_key.clone()]
+        },
         models,
         default_model: cfg.llm_model.clone(),
         api_key: None,
@@ -55,6 +48,22 @@ fn default_settings() -> AppSettings {
         mcp_servers: builtin_mcp_servers(),
         updated_at: chrono::Utc::now().to_rfc3339(),
     }
+}
+
+fn configured_models(cfg: &crate::config::Config) -> Vec<String> {
+    let mut models = Vec::new();
+    for model in cfg
+        .llm_text_models
+        .iter()
+        .chain(cfg.llm_image_models.iter())
+        .chain(cfg.llm_video_models.iter())
+    {
+        let model = model.trim();
+        if !model.is_empty() && !models.iter().any(|item| item == model) {
+            models.push(model.to_string());
+        }
+    }
+    models
 }
 
 fn builtin_mcp_servers() -> Vec<McpServerConfig> {
@@ -84,7 +93,7 @@ fn builtin_mcp_servers() -> Vec<McpServerConfig> {
     }]
 }
 
-fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppError> {
+pub fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppError> {
     if settings.llm_profiles.is_empty() {
         return Err(AppError::BadRequest("至少保留一个模型服务配置".into()));
     }
@@ -96,17 +105,26 @@ fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppError
         if profile.name.trim().is_empty() {
             profile.name = "未命名模型服务".into();
         }
+        let mut api_keys: Vec<String> = Vec::new();
+        for api_key in &profile.api_keys {
+            let api_key = api_key.trim().to_string();
+            if !api_key.is_empty() && !api_keys.iter().any(|item| item == &api_key) {
+                api_keys.push(api_key);
+            }
+        }
+        if let Some(api_key) = profile.api_key.take() {
+            let api_key = api_key.trim().to_string();
+            if !api_key.is_empty() && !api_keys.iter().any(|item| item == &api_key) {
+                api_keys.push(api_key);
+            }
+        }
+        profile.api_keys = api_keys;
         profile.models = profile
             .models
             .iter()
             .map(|item| item.trim().to_string())
             .filter(|item| !item.is_empty())
             .collect();
-        for model in BUILTIN_MODELS {
-            if !profile.models.iter().any(|item| item == model) {
-                profile.models.push((*model).to_string());
-            }
-        }
         if profile.models.is_empty() {
             return Err(AppError::BadRequest(format!(
                 "模型服务「{}」至少需要一个模型",
@@ -121,11 +139,7 @@ fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppError
         {
             profile.default_model = profile.models[0].clone();
         }
-        profile.has_api_key = profile.has_api_key
-            || profile
-                .api_key
-                .as_ref()
-                .is_some_and(|value| !value.trim().is_empty());
+        profile.has_api_key = !profile.api_keys.is_empty();
     }
 
     if !settings
@@ -185,6 +199,61 @@ fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppError
 
     settings.updated_at = chrono::Utc::now().to_rfc3339();
     Ok(settings)
+}
+
+pub fn import_startup_llm_profile(settings: &mut AppSettings) {
+    let cfg = crate::config::config();
+    let base_url = cfg.llm_base_url.trim();
+    let model = cfg.llm_model.trim();
+    if base_url.is_empty() || model.is_empty() {
+        return;
+    }
+
+    let startup_keys = if cfg.llm_api_key.trim().is_empty() {
+        vec![]
+    } else {
+        vec![cfg.llm_api_key.trim().to_string()]
+    };
+
+    if let Some(profile) = settings.llm_profiles.iter_mut().find(|profile| {
+        profile.id == "startup-env"
+            || profile.base_url.trim_end_matches('/') == base_url.trim_end_matches('/')
+    }) {
+        if profile.id == "startup-env" {
+            profile.name = "启动配置模型服务".into();
+            profile.base_url = base_url.to_string();
+        }
+        if !profile.models.iter().any(|item| item == model) {
+            profile.models.insert(0, model.to_string());
+        }
+        for configured in configured_models(cfg) {
+            if !profile.models.iter().any(|item| item == &configured) {
+                profile.models.push(configured);
+            }
+        }
+        for api_key in startup_keys {
+            if !profile.api_keys.iter().any(|item| item == &api_key) {
+                profile.api_keys.push(api_key);
+            }
+        }
+        if profile.default_model.trim().is_empty() {
+            profile.default_model = model.to_string();
+        }
+        return;
+    }
+
+    let models = configured_models(cfg);
+
+    settings.llm_profiles.push(LlmProfileConfig {
+        id: "startup-env".into(),
+        name: "启动配置模型服务".into(),
+        base_url: base_url.to_string(),
+        api_keys: startup_keys,
+        models,
+        default_model: model.to_string(),
+        api_key: None,
+        has_api_key: !cfg.llm_api_key.trim().is_empty(),
+    });
 }
 
 async fn get_settings(user: AuthUser) -> Result<Json<AppSettings>, AppError> {

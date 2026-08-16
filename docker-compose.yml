@@ -1,16 +1,78 @@
+# ============================================================
+# WaLiOffice 云服务器部署配置
+# 使用方式: docker compose pull && docker compose up -d
+# 所有环境变量已内联，服务器上无需额外 .env 文件
+# ============================================================
+
 version: "3.8"
+
 services:
   walioffice:
-    build: .
+    image: registry.cn-hangzhou.aliyuncs.com/fuzhengwei/walioffice:1.0
+    container_name: walioffice
     ports:
       - "8000:8000"
     environment:
-      - AIPPT_JWT_SECRET=change-me-to-a-long-random-secret
-      - AIPPT_LLM_API_KEY=change-me
-      - AIPPT_LLM_BASE_URL=http://127.0.0.1:8777/v1
-      - AIPPT_LLM_MODEL=gpt-5.5
-      - AIPPT_ADMIN_PASSWORD=admin123
+      # ── 基础配置 ──
+      AIPPT_APP_NAME: "WaLiOffice"
+      AIPPT_HOST: 0.0.0.0
+      AIPPT_PORT: 8000
+
+      # ── 安全配置（部署时必改 JWT_SECRET）──
+      AIPPT_JWT_SECRET: CHANGE_ME_TO_RANDOM_SECRET
+      AIPPT_JWT_EXPIRY_HOURS: 24
+
+      # ── 登录配置 ──
+      WALIOFFICE_X_API_AUTH_LOGIN_URL: https://x-api.itedus.cn/api/v1/auth/login
+
+      # ── 文本 LLM（部署时必改 API_KEY）──
+      LLM_TEXT_BASE_URL: https://apihub.agnes-ai.cn
+      LLM_TEXT_API_KEY: sk-46Sab5SEzuLZypINZf65k9WEqCMvVeqvRS6sl7rYEX5Cz8zd
+      LLM_TEXT_MODELS: agnes-2.5-flash
+
+      # ── 图片模型（部署时必改 API_KEY）──
+      LLM_IMAGE_BASE_URL: https://apihub.agnes-ai.cn
+      LLM_IMAGE_API_KEY: sk-46Sab5SEzuLZypINZf65k9WEqCMvVeqvRS6sl7rYEX5Cz8zd
+      LLM_IMAGE_MODELS: agnes-image-2.1-flash
+
+      # ── 视频模型（部署时必改 API_KEY）──
+      LLM_VIDEO_BASE_URL: https://apihub.agnes-ai.cn
+      LLM_VIDEO_API_KEY: sk-46Sab5SEzuLZypINZf65k9WEqCMvVeqvRS6sl7rYEX5Cz8zd
+      LLM_VIDEO_MODELS: agnes-video-v2.0
+
+      # ── Agent 配置 ──
+      AIPPT_LLM_PROVIDER: glm-gateway
+      AIPPT_LLM_TOOL_TIMEOUT_MS: 1800000
+      AIPPT_LLM_CHAT_TIMEOUT_MS: 1800000
+
+      # ── 联网搜索 ──
+      AIPPT_WEB_SEARCH_PROVIDER: auto
+      AIPPT_WEB_SEARCH_ENDPOINT: http://127.0.0.1:8080
+      AIPPT_WEB_SEARCH_TIMEOUT_MS: 20000
+      AIPPT_BAIDU_MCP_API_KEY: "bce-v3/ALTAK-pI2UPSdanssuc48RiPIhx/4d569c8eb60eef480e554668f9e20b6a7084e1fd"
+      AIPPT_BAIDU_MCP_SSE_ENDPOINT: http://appbuilder.baidu.com/v2/ai_search/mcp/sse
+
+      # ── 数据目录（容器内路径，不要改）──
+      AIPPT_DATA_DIR: data
+      AIPPT_PROJECTS_DIR: data/projects
+      AIPPT_SESSIONS_DIR: data/sessions
+      AIPPT_RENDER_OUTPUT_DIR: outputs
+
+      # ── CORS（改成你的域名或服务器 IP）──
+      AIPPT_CORS_ORIGINS: http://localhost:5173,http://localhost:8000
+
     volumes:
       - ./data:/app/data
       - ./outputs:/app/outputs
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

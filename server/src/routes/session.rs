@@ -95,7 +95,9 @@ async fn update_session(
         }
         let project_id_owned = match payload.project_id {
             Some(Value::Null) => None,
-            Some(Value::String(value)) => Some(value.trim().to_string()).filter(|value| !value.is_empty()),
+            Some(Value::String(value)) => {
+                Some(value.trim().to_string()).filter(|value| !value.is_empty())
+            }
             Some(_) => return Err(AppError::BadRequest("项目 ID 格式不正确".into())),
             None => session.project_id,
         };

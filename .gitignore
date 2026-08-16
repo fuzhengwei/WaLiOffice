@@ -13,6 +13,8 @@ server/target/
 
 # Environment
 .env
+.env.production
+.env.local
 
 # IDE
 .vscode/

@@ -1,13 +1,15 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { Bell, Files, LogOut, Sparkles, SquareCheckBig } from 'lucide-react'
+import {
+  Bell, Files, LogOut, Sparkles, Github
+} from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 
 const LOGO_URL = '/logo.png'
 
 const NAV_ITEMS = [
   { to: '/', label: '智能助手', icon: Sparkles, end: true },
-  { to: '/tasks', label: '任务清单', icon: SquareCheckBig },
   { to: '/files', label: '我的文件', icon: Files },
+  { to: 'https://github.com/fuzhengwei/WaLiOffice', label: '开源项目', icon: Github, external: true },
 ]
 
 export function AppLayout() {
@@ -43,6 +45,20 @@ export function AppLayout() {
             <nav className="hidden items-center gap-2 md:flex">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon
+                if (item.external) {
+                  return (
+                    <a
+                      key={item.to}
+                      href={item.to}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-full bg-white/55 px-4 py-2 text-sm font-medium text-surface-600 transition hover:bg-white/80 hover:text-surface-950"
+                    >
+                      <Icon className="h-4 w-4" />
+                      {item.label}
+                    </a>
+                  )
+                }
                 return (
                   <NavLink
                     key={item.to}
@@ -89,12 +105,26 @@ export function AppLayout() {
                 <LogOut className="h-4 w-4" />
                 <span>退出登录</span>
               </button>
-            </div>
+          </div>
           </div>
 
           <div className="mx-auto flex max-w-[1440px] gap-2 px-4 pb-3 md:hidden">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon
+              if (item.external) {
+                return (
+                  <a
+                    key={item.to}
+                    href={item.to}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full bg-white/55 px-3 py-2 text-sm font-medium text-surface-600 transition hover:bg-white/80 hover:text-surface-950"
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span className="truncate">{item.label}</span>
+                  </a>
+                )
+              }
               return (
                 <NavLink
                   key={item.to}
@@ -113,7 +143,7 @@ export function AppLayout() {
                 </NavLink>
               )
             })}
-          </div>
+            </div>
         </header>
 
         <main className="relative z-10 flex-1">

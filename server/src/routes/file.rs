@@ -22,6 +22,8 @@ pub fn router() -> Router {
         .route("/api/files/extract", post(extract_file_text))
         .route("/api/files/upload", post(upload_file))
         .route("/api/files/:id/content", get(get_file_content))
+        .route("/api/files/:id/thumbnail", get(get_file_thumbnail))
+        .route("/api/files/:id/preview", get(get_file_preview))
         .route("/api/files/:id", get(get_file).delete(delete_file))
         .route("/api/files/:id/download", get(download_file))
         .route("/api/files/folders/list", get(list_folders))
@@ -298,6 +300,161 @@ async fn delete_file(
     Ok(Json(json!({ "deleted": false, "id": id })))
 }
 
+/// 缩略图 — 图片类型返回缩略图字节，其他类型返回 JSON 元信息（前端用图标 + 文件色块代替）
+async fn get_file_thumbnail(
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let pool = crate::state::db_pool();
+    let file = file_repo::get_file(&pool, &user.0.id, &id)?
+        .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
+
+    // 图片类型：直接返回图片字节（前端用 CSS 缩放做缩略图）
+    if file.file_type == "image" {
+        let path = PathBuf::from(&file.file_path);
+        if !path.exists() {
+            return Err(AppError::NotFound("文件实体不存在".into()));
+        }
+        let data = tokio::fs::read(&path).await?;
+        let mime = mime_guess::from_path(&file.name).first_or_octet_stream();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, mime.as_ref())
+            .header(header::CACHE_CONTROL, "public, max-age=3600")
+            .body(Body::from(data))
+            .map_err(|e| AppError::Internal(anyhow::anyhow!(e)));
+    }
+
+    // 非图片类型：返回 JSON 元信息，前端用图标渲染缩略图卡片
+    let body = json!({
+        "file_type": file.file_type,
+        "name": file.name,
+        "file_size": file.file_size,
+    }).to_string();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))
+}
+
+/// 预览 — 返回文件内容供前端渲染
+/// 图片：返回图片字节（inline）
+/// 文本/markdown/drawio：返回文本
+/// xlsx/docx/pptx：返回提取的文本结构
+async fn get_file_preview(
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let pool = crate::state::db_pool();
+    let file = file_repo::get_file(&pool, &user.0.id, &id)?
+        .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
+
+    let path = PathBuf::from(&file.file_path);
+    if !path.exists() {
+        return Err(AppError::NotFound("文件实体不存在".into()));
+    }
+
+    let extension = FsPath::new(&file.name)
+        .extension()
+        .and_then(|v| v.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let mime_type = file
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("mime_type"))
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            mime_guess::from_path(&file.name)
+                .first_or_octet_stream()
+                .to_string()
+        });
+
+    // 图片：返回 base64 data URL
+    if file.file_type == "image" || matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg") {
+        let data = tokio::fs::read(&path).await?;
+        let b64 = base64_encode(&data);
+        return Ok(Json(json!({
+            "id": file.id,
+            "name": file.name,
+            "file_type": file.file_type,
+            "preview_type": "image",
+            "mime_type": mime_type,
+            "data_url": format!("data:{};base64,{}", mime_type, b64),
+            "file_size": file.file_size,
+        })));
+    }
+
+    // drawio / xml：返回 XML 文本
+    if extension == "drawio" || extension == "xml" {
+        let text = tokio::fs::read_to_string(&path).await?;
+        return Ok(Json(json!({
+            "id": file.id,
+            "name": file.name,
+            "file_type": file.file_type,
+            "preview_type": "drawio",
+            "text": text,
+            "file_size": file.file_size,
+        })));
+    }
+
+    // markdown / txt：返回文本
+    if matches!(extension.as_str(), "md" | "markdown" | "txt") {
+        let text = tokio::fs::read_to_string(&path).await?;
+        return Ok(Json(json!({
+            "id": file.id,
+            "name": file.name,
+            "file_type": file.file_type,
+            "preview_type": "markdown",
+            "text": text,
+            "file_size": file.file_size,
+        })));
+    }
+
+    // xlsx / docx / pptx / csv：返回结构化预览数据
+    let data = tokio::fs::read(&path).await?;
+    let structured = file_extract::extract_structured(&file.name, &mime_type, &data);
+    let preview_type = match extension.as_str() {
+        "xlsx" | "xls" | "csv" | "tsv" => "spreadsheet",
+        "docx" | "doc" => "document",
+        "pptx" | "ppt" => "presentation",
+        "pdf" => "pdf",
+        _ => "text",
+    };
+
+    // 对于结构化类型（presentation/spreadsheet/document），返回结构化 JSON
+    if structured.preview_type == "presentation"
+        || structured.preview_type == "spreadsheet"
+        || structured.preview_type == "document"
+    {
+        return Ok(Json(json!({
+            "id": file.id,
+            "name": file.name,
+            "file_type": file.file_type,
+            "preview_type": structured.preview_type,
+            "structured": structured.data,
+            "parser": structured.parser,
+            "truncated": structured.truncated,
+            "file_size": file.file_size,
+        })));
+    }
+
+    // 其他类型回退到文本
+    Ok(Json(json!({
+        "id": file.id,
+        "name": file.name,
+        "file_type": file.file_type,
+        "preview_type": preview_type,
+        "text": structured.data.get("text").and_then(|v| v.as_str()).unwrap_or(""),
+        "parser": structured.parser,
+        "truncated": structured.truncated,
+        "file_size": file.file_size,
+    })))
+}
+
 async fn list_folders(
     user: AuthUser,
     Query(q): Query<FolderQuery>,
@@ -429,4 +586,29 @@ fn infer_file_type(name: &str, mime_type: &str) -> String {
         }
         _ => "other".into(),
     }
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        result.push(CHARS[(b[0] >> 2) as usize] as char);
+        result.push(CHARS[((b[0] & 0x03) << 4 | b[1] >> 4) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((b[1] & 0x0f) << 2 | b[2] >> 6) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(b[2] & 0x3f) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
 }

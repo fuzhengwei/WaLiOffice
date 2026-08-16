@@ -2,7 +2,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;
-use serde_json::json;
 
 use crate::auth::middleware::AuthUser;
 use crate::db::user_repo;
@@ -16,7 +15,6 @@ pub fn router() -> Router {
         .route("/api/auth/verification-login", post(verification_login))
         .route("/api/auth/register", post(register))
         .route("/api/auth/me", get(me))
-        .route("/api/auth/demo-accounts", get(demo_accounts))
 }
 
 async fn login(Json(req): Json<LoginRequest>) -> Result<Json<TokenResponse>, AppError> {
@@ -47,6 +45,12 @@ struct XApiLoginResponse {
 
 async fn verification_login(
     Json(req): Json<VerificationLoginRequest>,
+) -> Result<Json<TokenResponse>, AppError> {
+    login_with_verification(req).await
+}
+
+async fn login_with_verification(
+    req: VerificationLoginRequest,
 ) -> Result<Json<TokenResponse>, AppError> {
     let code = req.code.trim();
     if code.is_empty() {
@@ -81,7 +85,8 @@ async fn verification_login(
         .as_deref()
         .and_then(extract_openid_from_x_api_token)
         .unwrap_or_else(|| code.to_string());
-    let user = user_repo::find_or_create_external(&pool, &format!("wx_{external_id}"))?;
+    let username = format!("wx_{external_id}");
+    let user = user_repo::find_or_create_external(&pool, &username)?;
     let token = crate::auth::create_token(&user)?;
 
     Ok(Json(TokenResponse {
@@ -124,18 +129,4 @@ async fn register(Json(req): Json<RegisterRequest>) -> Result<Json<TokenResponse
 
 async fn me(user: AuthUser) -> Result<Json<crate::models::User>, AppError> {
     Ok(Json(user.0))
-}
-
-async fn demo_accounts() -> Json<serde_json::Value> {
-    let cfg = crate::config::config();
-    Json(json!({
-        "accounts": [
-            {
-                "username": cfg.admin_username,
-                "password": cfg.admin_password,
-                "role": "admin",
-                "description": "管理员账号"
-            }
-        ]
-    }))
 }

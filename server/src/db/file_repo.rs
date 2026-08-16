@@ -127,6 +127,35 @@ pub fn get_file(pool: &DbPool, owner_id: &str, id: &str) -> AppResult<Option<Fil
     Ok(file)
 }
 
+fn get_generated_artifact_file(
+    pool: &DbPool,
+    owner_id: &str,
+    metadata: Option<&Value>,
+) -> AppResult<Option<FileRow>> {
+    let artifact_id = metadata
+        .and_then(|value| value.get("artifact_id"))
+        .and_then(|value| value.as_str());
+    if artifact_id.is_none() {
+        return Ok(None);
+    }
+
+    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let file = conn
+        .query_row(
+            "SELECT id, owner_id, name, file_path, file_type, file_size, folder_id, description, metadata, created_at, updated_at
+             FROM files
+             WHERE owner_id = ?1
+               AND json_extract(metadata, '$.source') = 'generated_artifact'
+               AND json_extract(metadata, '$.artifact_id') = ?2
+             ORDER BY updated_at DESC
+             LIMIT 1",
+            params![owner_id, artifact_id],
+            map_file,
+        )
+        .optional()?;
+    Ok(file)
+}
+
 pub fn create_file(
     pool: &DbPool,
     owner_id: &str,
@@ -138,6 +167,10 @@ pub fn create_file(
     description: Option<&str>,
     metadata: Option<Value>,
 ) -> AppResult<FileRow> {
+    if let Some(existing) = get_generated_artifact_file(pool, owner_id, metadata.as_ref())? {
+        return Ok(existing);
+    }
+
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();

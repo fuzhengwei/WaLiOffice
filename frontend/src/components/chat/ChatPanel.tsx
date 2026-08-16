@@ -457,6 +457,22 @@ export function ChatPanel({
       icon: PenTool,
       accent: 'from-violet-500 to-fuchsia-500',
     },
+    {
+      title: 'AI 画图',
+      desc: '海报、插画和封面图',
+      prompt: '帮我生成一张适合公众号封面的科技感办公 AI 插画，画面干净高级，突出智能协作与效率提升。',
+      tool: 'image',
+      icon: ImageIcon,
+      accent: 'from-pink-500 to-rose-500',
+    },
+    {
+      title: '生成视频',
+      desc: '脚本、分镜到短视频',
+      prompt: '帮我生成一段 15 秒产品介绍短视频，包含脚本、分镜和画面提示词，风格简洁有科技感。',
+      tool: 'video',
+      icon: Clapperboard,
+      accent: 'from-rose-500 to-orange-500',
+    },
   ]
 
   useEffect(() => {
@@ -508,7 +524,7 @@ export function ChatPanel({
               </div>
               <h1 className="text-3xl font-semibold tracking-tight text-surface-950">今天要做什么？</h1>
               <p className="mt-3 max-w-xl text-sm leading-6 text-surface-500">
-                WaLiOffice 在线智能办 公 AI：先分析需求，再决策工具，最后绘制或生成产物。你可以先描述目标，也可以直接选工具开工。
+                WaLiOffice 在线智能办公 AI：先分析需求，再决策工具，最后绘制或生成产物。你可以先描述目标，也可以直接选工具开工。
               </p>
               <div className="mt-7 grid w-full max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
                 {starterCards.map((card) => {

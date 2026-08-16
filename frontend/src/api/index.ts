@@ -37,7 +37,6 @@ export const authApi = {
   register: (username: string, email: string, password: string) =>
     api.post<TokenResponse>('/auth/register', { username, email, password }),
   getMe: () => api.get('/auth/me'),
-  getDemoAccounts: () => api.get('/auth/demo-accounts'),
   changePassword: (oldPassword: string, newPassword: string) =>
     api.post('/auth/change-password', { old_password: oldPassword, new_password: newPassword }),
 };
@@ -100,21 +99,6 @@ export const settingsApi = {
   testMcp: (payload: MCPServiceConfig) => api.post('/settings/mcp/test', payload),
 };
 
-// ===== 任务 API =====
-export const taskApi = {
-  list: (params?: { status?: string; priority?: string; project_id?: string; q?: string; page?: number; page_size?: number }) =>
-    api.get('/tasks', { params }),
-  stats: () => api.get('/tasks/stats'),
-  create: (data: { title: string; description?: string; priority?: string; due_date?: string; project_id?: string; tags?: string[] }) =>
-    api.post('/tasks', data),
-  get: (id: string) => api.get(`/tasks/${id}`),
-  update: (id: string, data: { title?: string; description?: string; status?: string; priority?: string; due_date?: string; project_id?: string; tags?: string[]; order?: number }) =>
-    api.patch(`/tasks/${id}`, data),
-  delete: (id: string) => api.delete(`/tasks/${id}`),
-  reorder: (orders: Array<{ id: string; order: number }>) =>
-    api.post('/tasks/reorder', { orders }),
-};
-
 // ===== 文件 API =====
 export const fileApi = {
   list: (folderId?: string) => api.get('/files', { params: { folder_id: folderId } }),
@@ -140,6 +124,8 @@ export const fileApi = {
   },
   get: (id: string) => api.get(`/files/${id}`),
   content: (id: string) => api.get(`/files/${id}/content`),
+  thumbnail: (id: string) => api.get(`/files/${id}/thumbnail`, { responseType: 'blob' }),
+  preview: (id: string) => api.get(`/files/${id}/preview`),
   download: (id: string) => api.get(`/files/${id}/download`, { responseType: 'blob' }),
   delete: (id: string) => api.delete(`/files/${id}`),
 };
@@ -159,11 +145,6 @@ export const notificationApi = {
   markAsRead: (id: string) => api.post(`/notifications/${id}/read`),
   markAllAsRead: () => api.post('/notifications/read-all'),
   delete: (id: string) => api.delete(`/notifications/${id}`),
-};
-
-// ===== Dashboard API =====
-export const dashboardApi = {
-  stats: () => api.get('/dashboard/stats'),
 };
 
 // ===== 对话 API (SSE) =====

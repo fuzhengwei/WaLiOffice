@@ -3,13 +3,11 @@ pub mod notification_repo;
 pub mod project_repo;
 pub mod session_repo;
 pub mod settings_repo;
-pub mod task_repo;
 pub mod user_repo;
 
 use anyhow::Result;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
 use std::fs;
 use tracing::info;
 
@@ -38,7 +36,10 @@ fn ensure_session_order_col(conn: &DbConn) -> Result<()> {
         }
     }
     if !has_order_col {
-        conn.execute("ALTER TABLE sessions ADD COLUMN order_col INTEGER NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN order_col INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     Ok(())
 }
@@ -48,36 +49,5 @@ fn run_migrations(pool: &DbPool) -> Result<()> {
     let conn = pool.get()?;
     conn.execute_batch(sql)?;
     ensure_session_order_col(&conn)?;
-
-    // seed admin user
-    let admin_username = crate::config::config().admin_username.clone();
-    let admin_password = crate::config::config().admin_password.clone();
-    let existing: Option<String> = conn
-        .query_row(
-            "SELECT id FROM users WHERE username = ?1",
-            params![&admin_username],
-            |row| row.get(0),
-        )
-        .ok();
-
-    if existing.is_none() {
-        let id = "admin-001";
-        let now = chrono::Utc::now().to_rfc3339();
-        let hash = bcrypt::hash(&admin_password, 10)?;
-        conn.execute(
-            "INSERT INTO users (id, username, email, password_hash, role, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                id,
-                &admin_username,
-                "admin@walioffice.local",
-                &hash,
-                "admin",
-                &now,
-                &now
-            ],
-        )?;
-        info!("✅ 已初始化管理员账号: {admin_username} / {admin_password}");
-    }
     Ok(())
 }

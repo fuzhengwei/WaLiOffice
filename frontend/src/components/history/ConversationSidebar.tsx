@@ -1,4 +1,4 @@
-import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Image, LayoutDashboard, LogOut, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Settings as SettingsIcon, Sheet, Sparkles, SquareCheckBig, Trash2 } from 'lucide-react'
+import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Image, LayoutDashboard, LogOut, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Sheet, Sparkles, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, DragEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -15,7 +15,6 @@ interface ConversationSidebarProps {
   userName?: string
   activeTool: ToolKind
   activeConversationId?: string | null
-  activeView?: 'chat' | 'settings'
   onToolChange: (tool: ToolKind) => void
   onSelectConversation?: (id: string) => void
   onSelectProject?: (projectId: string) => void
@@ -24,7 +23,6 @@ interface ConversationSidebarProps {
   onDeleteConversation?: (id: string) => void
   onDeleteProject?: (projectId: string) => void
   onMoveConversation?: (id: string, projectId: string | null, beforeId?: string | null) => void
-  onOpenSettings?: () => void
   onLogout?: () => void
   searchQuery?: string
   onSearchQueryChange?: (query: string) => void
@@ -99,7 +97,6 @@ export function ConversationSidebar({
   userName,
   activeTool,
   activeConversationId,
-  activeView = 'chat',
   onSelectConversation,
   onSelectProject,
   onNewConversation,
@@ -107,7 +104,6 @@ export function ConversationSidebar({
   onDeleteConversation,
   onDeleteProject,
   onMoveConversation,
-  onOpenSettings,
   onLogout,
   searchQuery = '',
   onSearchQueryChange,
@@ -173,7 +169,6 @@ export function ConversationSidebar({
 
   const workspaceLinks = [
     { to: '/', label: '智能助手', icon: Sparkles, active: location.pathname === '/' },
-    { to: '/tasks', label: '任务清单', icon: SquareCheckBig, active: location.pathname.startsWith('/tasks') },
     { to: '/files', label: '我的文件', icon: Folder, active: location.pathname.startsWith('/files') },
   ]
 
@@ -514,15 +509,6 @@ export function ConversationSidebar({
             <div className="truncate text-xs font-bold text-surface-900">{userName || 'User'}</div>
             <div className="truncate text-[10px] font-medium text-surface-500">个人办公空间</div>
           </div>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all ${activeView === 'settings' ? 'bg-surface-950 text-white shadow-sm' : 'bg-white/80 text-surface-500 hover:bg-white hover:text-surface-950'}`}
-            title="设置"
-            aria-label="设置"
-          >
-            <SettingsIcon className="h-4 w-4" />
-          </button>
           <button
             type="button"
             onClick={onLogout}

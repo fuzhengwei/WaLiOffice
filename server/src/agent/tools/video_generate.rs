@@ -9,7 +9,7 @@ use crate::llm::LlmClient;
 use crate::models::{ChatAttachment, ChatMessage};
 
 use super::agnes_media::{
-    get_json, http_client, post_json, resolve_api_key, AGNES_API_BASE, AGNES_VIDEO_MODEL,
+    agnes_video_model, get_json, http_client, post_json, resolve_video_credentials,
 };
 use super::local_video;
 
@@ -376,8 +376,8 @@ impl OfficeTool for VideoGenerateTool {
         let num_frames = infer_num_frames(&plan.duration);
         let frame_rate = 24u32;
 
-        let api_key = match resolve_api_key(&ctx.user_id) {
-            Ok(key) => key,
+        let credentials = match resolve_video_credentials(&ctx.user_id) {
+            Ok(credentials) => credentials,
             Err(err) => {
                 return local_video_artifact(
                     ctx,
@@ -394,6 +394,7 @@ impl OfficeTool for VideoGenerateTool {
                 .await;
             }
         };
+        let video_model = agnes_video_model();
         let client = match http_client(Duration::from_secs(90)) {
             Ok(client) => client,
             Err(err) => {
@@ -424,7 +425,7 @@ impl OfficeTool for VideoGenerateTool {
         );
 
         let mut request_body = json!({
-            "model": AGNES_VIDEO_MODEL,
+            "model": video_model.as_str(),
             "prompt": plan.prompt.clone(),
             "negative_prompt": plan.negative_prompt.clone(),
             "width": width,
@@ -446,34 +447,40 @@ impl OfficeTool for VideoGenerateTool {
             request_body["image"] = json!(image);
         }
 
-        let create_response =
-            match post_json::<CreateVideoResponse>(&client, "/v1/videos", &api_key, &request_body)
-                .await
-            {
-                Ok(response) => response,
-                Err(err) => {
-                    return local_video_artifact(
-                        ctx,
-                        topic,
-                        &plan,
-                        width,
-                        height,
-                        frame_rate,
-                        num_frames,
-                        generation_mode,
-                        image_inputs.len(),
-                        format!("Agnes 视频任务创建失败：{err}"),
-                    )
-                    .await;
-                }
-            };
+        let create_url = credentials.endpoint("/v1/videos");
+        let create_response = match post_json::<CreateVideoResponse>(
+            &client,
+            &create_url,
+            &credentials,
+            &request_body,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                return local_video_artifact(
+                    ctx,
+                    topic,
+                    &plan,
+                    width,
+                    height,
+                    frame_rate,
+                    num_frames,
+                    generation_mode,
+                    image_inputs.len(),
+                    format!("Agnes 视频任务创建失败：{err}"),
+                )
+                .await;
+            }
+        };
 
         let video_id = create_response.video_id.clone();
         let task_id = create_response.task_id.clone();
         let poll_url = format!(
-            "{AGNES_API_BASE}/agnesapi?video_id={}&model_name={}",
+            "{}?video_id={}&model_name={}",
+            credentials.endpoint("/agnesapi"),
             urlencoding::encode(&video_id),
-            urlencoding::encode(AGNES_VIDEO_MODEL),
+            urlencoding::encode(&video_model),
         );
         let deadline = Instant::now() + Duration::from_secs(480);
         let mut latest_progress = create_response.progress.unwrap_or(0);
@@ -495,25 +502,30 @@ impl OfficeTool for VideoGenerateTool {
                 .await;
             }
 
-            let status_response =
-                match get_json::<QueryVideoResponse>(&client, &poll_url, &api_key).await {
-                    Ok(response) => response,
-                    Err(err) => {
-                        return local_video_artifact(
-                            ctx,
-                            topic,
-                            &plan,
-                            width,
-                            height,
-                            frame_rate,
-                            num_frames,
-                            generation_mode,
-                            image_inputs.len(),
-                            format!("获取 Agnes 视频结果失败：{err}"),
-                        )
-                        .await;
-                    }
-                };
+            let status_response = match get_json::<QueryVideoResponse>(
+                &client,
+                &poll_url,
+                &credentials,
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    return local_video_artifact(
+                        ctx,
+                        topic,
+                        &plan,
+                        width,
+                        height,
+                        frame_rate,
+                        num_frames,
+                        generation_mode,
+                        image_inputs.len(),
+                        format!("获取 Agnes 视频结果失败：{err}"),
+                    )
+                    .await;
+                }
+            };
 
             latest_progress = status_response.progress.unwrap_or(latest_progress);
             ctx.send(
@@ -577,7 +589,7 @@ impl OfficeTool for VideoGenerateTool {
                                 "frame_rate": frame_rate,
                                 "num_frames": num_frames,
                                 "provider": "agnes",
-                                "model": status_response.model.unwrap_or_else(|| AGNES_VIDEO_MODEL.to_string()),
+                                "model": status_response.model.unwrap_or_else(|| video_model.clone()),
                             }),
                         }],
                     );

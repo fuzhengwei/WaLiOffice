@@ -21,6 +21,8 @@ pub struct LlmProfileConfig {
     pub id: String,
     pub name: String,
     pub base_url: String,
+    #[serde(default)]
+    pub api_keys: Vec<String>,
     pub models: Vec<String>,
     pub default_model: String,
     #[serde(skip_serializing_if = "Option::is_none")]

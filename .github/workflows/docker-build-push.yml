@@ -1,0 +1,74 @@
+# ── WaLiOffice Docker 镜像构建并推送到阿里云 ACR ──
+# 触发条件：push 到 main 分支、打 v* 标签、手动触发
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  # 阿里云 ACR 配置（改成你自己的命名空间和仓库）
+  ALIYUN_REGISTRY: registry.cn-hangzhou.aliyuncs.com
+  ALIYUN_NAMESPACE: fuzhengwei
+  IMAGE_NAME: walioffice
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # ── 1. 检出代码 ──
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. 设置镜像标签 ──
+      # main 分支推送 → latest + commit SHA
+      # tag 推送 → 对应版本号
+      # 手动触发 → run number
+      - name: Set Image Tags
+        id: tags
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "tags=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:${VERSION}" >> $GITHUB_OUTPUT
+            echo "latest=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/heads/main ]]; then
+            echo "tags=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest,${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+            echo "latest=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+          else
+            echo "tags=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:run-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "latest=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+          fi
+
+      # ── 3. 登录阿里云 ACR ──
+      - name: Login to Aliyun ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ALIYUN_REGISTRY }}
+          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+
+      # ── 4. 构建并推送镜像 ──
+      - name: Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          # 多架构构建（可选，需要时取消注释）
+          # platforms: linux/amd64,linux/arm64
+          # 构建缓存加速
+          cache-from: type=registry,ref=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      # ── 5. 输出镜像信息 ──
+      - name: Image Info
+        run: |
+          echo "✅ 镜像构建并推送成功！"
+          echo "📦 镜像地址："
+          echo "${{ steps.tags.outputs.tags }}" | tr ',' '\n' | sed 's/^/  - /'
+          echo ""
+          echo "🐳 拉取命令："
+          echo "  docker pull ${{ steps.tags.outputs.latest }}"

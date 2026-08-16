@@ -46,7 +46,10 @@ impl OfficeTool for ChartGenerateTool {
         if topic.trim().is_empty() {
             return ToolResult::err("topic 不能为空");
         }
-        let preferred_type = input.get("chart_type").and_then(|v| v.as_str()).unwrap_or("bar");
+        let preferred_type = input
+            .get("chart_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("bar");
 
         ctx.send(
             "state_update",

@@ -1,16 +1,20 @@
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
 use axum::{Json, Router};
+use base64::Engine;
 use futures::stream::Stream;
+use std::collections::HashSet;
 use std::convert::Infallible;
+use std::path::{Path as FsPath, PathBuf};
 use std::time::Duration;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::agent::{run_agent_loop, AgentConfig, AgentEvent};
 use crate::auth::middleware::AuthUser;
-use crate::db::session_repo;
+use crate::db::{file_repo, project_repo, session_repo, DbPool};
 use crate::error::AppError;
-use crate::models::{Artifact, ChatAttachment, ChatMessage, ChatRequest};
+use crate::models::{Artifact, ChatAttachment, ChatMessage, ChatRequest, PptProject};
+use crate::render;
 use crate::state;
 
 pub fn router() -> Router {
@@ -294,6 +298,508 @@ fn merge_session_artifacts(existing: Vec<Artifact>, current_turn: Vec<Artifact>)
     merged
 }
 
+fn user_file_dir(owner_id: &str) -> PathBuf {
+    PathBuf::from(&crate::config::config().data_dir)
+        .join("files")
+        .join(owner_id)
+}
+
+fn sanitize_filename(name: &str, fallback: &str) -> String {
+    let cleaned = name
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if cleaned.is_empty() {
+        fallback.to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn ensure_extension(name: &str, extension: &str) -> String {
+    if name.to_lowercase().ends_with(&extension.to_lowercase()) {
+        name.to_string()
+    } else {
+        format!("{name}{extension}")
+    }
+}
+
+fn infer_file_type(name: &str, mime_type: &str) -> String {
+    let extension = FsPath::new(name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match extension.as_str() {
+        "ppt" | "pptx" => "ppt".into(),
+        "doc" | "docx" | "md" | "markdown" | "txt" | "pdf" => "doc".into(),
+        "xls" | "xlsx" | "csv" | "tsv" => "excel".into(),
+        "drawio" | "xml" => "drawio".into(),
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg" => "image".into(),
+        "mp4" | "webm" | "mov" => "video".into(),
+        _ if mime_type.starts_with("image/") => "image".into(),
+        _ if mime_type.starts_with("video/") => "video".into(),
+        _ if mime_type.contains("spreadsheet") || mime_type.contains("excel") => "excel".into(),
+        _ if mime_type.contains("presentation") => "ppt".into(),
+        _ if mime_type.contains("pdf")
+            || mime_type.contains("word")
+            || mime_type.starts_with("text/") =>
+        {
+            "doc".into()
+        }
+        _ => "other".into(),
+    }
+}
+
+async fn save_file_bytes(
+    pool: &DbPool,
+    owner_id: &str,
+    name: &str,
+    data: &[u8],
+    mime_type: &str,
+    description: &str,
+    metadata: serde_json::Value,
+) -> anyhow::Result<()> {
+    if data.is_empty() {
+        return Ok(());
+    }
+    let safe_name = sanitize_filename(name, "walioffice-file.bin");
+    let extension = FsPath::new(&safe_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let storage_name = format!("{}{}", uuid::Uuid::new_v4(), extension);
+    let storage_dir = user_file_dir(owner_id);
+    tokio::fs::create_dir_all(&storage_dir).await?;
+    let storage_path = storage_dir.join(storage_name);
+    tokio::fs::write(&storage_path, data).await?;
+    let file_type = infer_file_type(&safe_name, mime_type);
+    file_repo::create_file(
+        pool,
+        owner_id,
+        &safe_name,
+        &storage_path.to_string_lossy(),
+        &file_type,
+        data.len() as i64,
+        None,
+        Some(description),
+        Some(metadata),
+    )?;
+    Ok(())
+}
+
+fn decode_data_url(value: &str) -> Option<(String, Vec<u8>)> {
+    let (header, payload) = value.split_once(',')?;
+    if !header.starts_with("data:") || !header.contains(";base64") {
+        return None;
+    }
+    let mime_type = header
+        .trim_start_matches("data:")
+        .split(';')
+        .next()
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .ok()?;
+    Some((mime_type, data))
+}
+
+fn mime_extension(mime_type: &str, fallback: &str) -> String {
+    match mime_type {
+        "image/png" => ".png".into(),
+        "image/jpeg" | "image/jpg" => ".jpg".into(),
+        "image/webp" => ".webp".into(),
+        "image/gif" => ".gif".into(),
+        "video/mp4" => ".mp4".into(),
+        "video/webm" => ".webm".into(),
+        _ => fallback.into(),
+    }
+}
+
+async fn download_remote_file(
+    url: &str,
+    expected_prefix: &str,
+) -> anyhow::Result<(String, Vec<u8>)> {
+    let response = reqwest::Client::new()
+        .get(url)
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await?
+        .error_for_status()?;
+    let mime_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| value.starts_with(expected_prefix))
+        .ok_or_else(|| anyhow::anyhow!("远程文件类型不匹配"))?
+        .to_string();
+    let data = response.bytes().await?.to_vec();
+    Ok((mime_type, data))
+}
+
+async fn save_media_url_to_files(
+    pool: &DbPool,
+    owner_id: &str,
+    artifact: &Artifact,
+    url: &str,
+    expected_prefix: &str,
+    fallback_name: &str,
+    fallback_extension: &str,
+    description: &str,
+    metadata: serde_json::Value,
+) {
+    if let Some((mime_type, data)) = decode_data_url(url) {
+        let filename = artifact_filename(
+            artifact,
+            fallback_name,
+            &mime_extension(&mime_type, fallback_extension),
+        );
+        let _ = save_file_bytes(
+            pool,
+            owner_id,
+            &filename,
+            &data,
+            &mime_type,
+            description,
+            metadata,
+        )
+        .await;
+        return;
+    }
+
+    if url.starts_with("http://") || url.starts_with("https://") {
+        if let Ok((mime_type, data)) = download_remote_file(url, expected_prefix).await {
+            let filename = artifact_filename(
+                artifact,
+                fallback_name,
+                &mime_extension(&mime_type, fallback_extension),
+            );
+            let _ = save_file_bytes(
+                pool,
+                owner_id,
+                &filename,
+                &data,
+                &mime_type,
+                description,
+                metadata,
+            )
+            .await;
+            return;
+        }
+    }
+
+    let filename = artifact_filename(artifact, &format!("{fallback_name}-link"), ".url.txt");
+    let _ = save_file_bytes(
+        pool,
+        owner_id,
+        &filename,
+        url.as_bytes(),
+        "text/plain",
+        description,
+        metadata,
+    )
+    .await;
+}
+
+async fn save_chat_attachments_to_files(
+    pool: &DbPool,
+    owner_id: &str,
+    attachments: &[ChatAttachment],
+) {
+    for attachment in attachments {
+        let description = format!("聊天上传附件：{}", attachment.name);
+        if let Some(data_url) = attachment.data_url.as_deref() {
+            if let Some((mime_type, data)) = decode_data_url(data_url) {
+                let filename = ensure_extension(
+                    &sanitize_filename(&attachment.name, "chat-image"),
+                    &mime_extension(&mime_type, ".bin"),
+                );
+                let _ = save_file_bytes(
+                    pool,
+                    owner_id,
+                    &filename,
+                    &data,
+                    &mime_type,
+                    &description,
+                    serde_json::json!({
+                        "source": "chat_attachment",
+                        "original_name": attachment.name,
+                        "mime_type": mime_type,
+                    }),
+                )
+                .await;
+                continue;
+            }
+        }
+
+        if let Some(text) = attachment.text_content.as_deref() {
+            if !text.trim().is_empty() {
+                let lower_name = attachment.name.to_lowercase();
+                let filename = if lower_name.ends_with(".md")
+                    || lower_name.ends_with(".markdown")
+                    || lower_name.ends_with(".txt")
+                    || lower_name.ends_with(".csv")
+                    || lower_name.ends_with(".json")
+                    || lower_name.ends_with(".tsv")
+                {
+                    sanitize_filename(&attachment.name, "chat-attachment.txt")
+                } else {
+                    ensure_extension(
+                        &format!(
+                            "{}-文本副本",
+                            sanitize_filename(&attachment.name, "chat-attachment")
+                        ),
+                        ".txt",
+                    )
+                };
+                let _ = save_file_bytes(
+                    pool,
+                    owner_id,
+                    &filename,
+                    text.as_bytes(),
+                    attachment.mime_type.as_str(),
+                    &description,
+                    serde_json::json!({
+                        "source": "chat_attachment_text_copy",
+                        "original_name": attachment.name,
+                        "mime_type": attachment.mime_type,
+                    }),
+                )
+                .await;
+            }
+        }
+    }
+}
+
+fn artifact_filename(artifact: &Artifact, fallback: &str, extension: &str) -> String {
+    ensure_extension(&sanitize_filename(&artifact.title, fallback), extension)
+}
+
+async fn save_generated_artifact_to_files(pool: &DbPool, owner_id: &str, artifact: &Artifact) {
+    tracing::info!("保存生成产物到文件: kind={}, title={}, artifact_id={}", artifact.kind, artifact.title, artifact.id);
+    let description = format!("智能助手生成：{}", artifact.title);
+    let metadata = serde_json::json!({
+        "source": "generated_artifact",
+        "artifact_id": artifact.id,
+        "artifact_kind": artifact.kind,
+        "tool_kind": artifact.tool_kind,
+    });
+
+    match artifact.kind.as_str() {
+        "document" => {
+            let sections = artifact
+                .content
+                .get("sections")
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
+            if let Ok(sections) =
+                serde_json::from_value::<Vec<render::docx_render::DocSection>>(sections)
+            {
+                let data = render::docx_render::DocData {
+                    title: artifact.title.clone(),
+                    sections,
+                };
+                let filename = artifact_filename(artifact, "document", ".docx");
+                let path = render::output_path(&filename);
+                if render::docx_render::render_docx(&data, &path).is_ok() {
+                    if let Ok(bytes) = tokio::fs::read(&path).await {
+                        let _ = save_file_bytes(pool, owner_id, &filename, &bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", &description, metadata).await;
+                    }
+                    return;
+                }
+            }
+            if let Some(markdown) = artifact
+                .content
+                .get("markdown")
+                .and_then(|value| value.as_str())
+            {
+                let filename = artifact_filename(artifact, "document", ".md");
+                let _ = save_file_bytes(
+                    pool,
+                    owner_id,
+                    &filename,
+                    markdown.as_bytes(),
+                    "text/markdown",
+                    &description,
+                    metadata,
+                )
+                .await;
+            }
+        }
+        "sheet" => {
+            let tables = artifact
+                .content
+                .get("tables")
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
+            if let Ok(tables) =
+                serde_json::from_value::<Vec<render::xlsx_render::SheetTable>>(tables)
+            {
+                let data = render::xlsx_render::SheetData {
+                    title: artifact.title.clone(),
+                    tables,
+                };
+                let filename = artifact_filename(artifact, "spreadsheet", ".xlsx");
+                let path = render::output_path(&filename);
+                if render::xlsx_render::render_xlsx(&data, &path).is_ok() {
+                    if let Ok(bytes) = tokio::fs::read(&path).await {
+                        let _ = save_file_bytes(
+                            pool,
+                            owner_id,
+                            &filename,
+                            &bytes,
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            &description,
+                            metadata,
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
+        "markdown" => {
+            if let Some(markdown) = artifact
+                .content
+                .get("markdown")
+                .and_then(|value| value.as_str())
+            {
+                let filename = artifact_filename(artifact, "document", ".md");
+                let _ = save_file_bytes(
+                    pool,
+                    owner_id,
+                    &filename,
+                    markdown.as_bytes(),
+                    "text/markdown",
+                    &description,
+                    metadata,
+                )
+                .await;
+            }
+        }
+        "drawio" => {
+            if let Some(xml) = artifact.content.get("xml").and_then(|value| value.as_str()) {
+                let filename = artifact_filename(artifact, "diagram", ".drawio");
+                let _ = save_file_bytes(
+                    pool,
+                    owner_id,
+                    &filename,
+                    xml.as_bytes(),
+                    "application/xml",
+                    &description,
+                    metadata,
+                )
+                .await;
+            }
+        }
+        "ppt" => {
+            let maybe_project_id = artifact
+                .content
+                .get("project_id")
+                .and_then(|value| value.as_str());
+            let project = maybe_project_id
+                .and_then(|project_id| project_repo::load_ppt_project(project_id).ok().flatten());
+            let project = project.or_else(|| {
+                let slides = artifact.content.get("slides")?.clone();
+                let slides = serde_json::from_value(slides).ok()?;
+                Some(PptProject {
+                    id: artifact
+                        .content
+                        .get("project_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or(&artifact.id)
+                        .to_string(),
+                    title: artifact.title.clone(),
+                    theme: artifact
+                        .content
+                        .get("theme")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("default")
+                        .to_string(),
+                    slides,
+                    history: None,
+                    layout: "16x9".to_string(),
+                    created_at: artifact.created_at.clone(),
+                    updated_at: artifact.updated_at.clone(),
+                    owner_id: owner_id.to_string(),
+                })
+            });
+            if let Some(project) = project {
+                let filename = artifact_filename(artifact, "presentation", ".pptx");
+                let path = render::output_path(&filename);
+                if render::pptx_render::render_pptx(&project, &path).is_ok() {
+                    if let Ok(bytes) = tokio::fs::read(&path).await {
+                        let _ = save_file_bytes(pool, owner_id, &filename, &bytes, "application/vnd.openxmlformats-officedocument.presentationml.presentation", &description, metadata).await;
+                    }
+                }
+            }
+        }
+        "image" => {
+            if let Some(url) = artifact
+                .content
+                .get("images")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.first())
+                .and_then(|value| value.as_str())
+            {
+                save_media_url_to_files(
+                    pool,
+                    owner_id,
+                    artifact,
+                    url,
+                    "image/",
+                    "image",
+                    ".png",
+                    &description,
+                    metadata,
+                )
+                .await;
+            }
+        }
+        "video" => {
+            if let Some(url) = artifact
+                .content
+                .get("video_url")
+                .and_then(|value| value.as_str())
+            {
+                save_media_url_to_files(
+                    pool,
+                    owner_id,
+                    artifact,
+                    url,
+                    "video/",
+                    "video",
+                    ".mp4",
+                    &description,
+                    metadata,
+                )
+                .await;
+            }
+        }
+        _ => {
+            let filename = artifact_filename(artifact, "artifact", ".json");
+            if let Ok(bytes) = serde_json::to_vec_pretty(artifact) {
+                let _ = save_file_bytes(
+                    pool,
+                    owner_id,
+                    &filename,
+                    &bytes,
+                    "application/json",
+                    &description,
+                    metadata,
+                )
+                .await;
+            }
+        }
+    }
+}
+
 async fn chat_stream(
     user: AuthUser,
     Json(req): Json<ChatRequest>,
@@ -334,6 +840,10 @@ async fn chat_stream(
     let history = session_repo::get_messages(&pool, &session_id, 50).unwrap_or_default();
     let existing_artifacts = session_repo::get_artifacts(&pool, &session_id).unwrap_or_default();
 
+    if let Some(attachments) = req.attachments.as_deref() {
+        save_chat_attachments_to_files(&pool, &user.0.id, attachments).await;
+    }
+
     // 保存用户消息
     let user_msg = ChatMessage {
         role: "user".into(),
@@ -373,6 +883,7 @@ async fn chat_stream(
 
     let session_id_for_save = session_id.clone();
     let pool_for_save = pool.clone();
+    let user_id_for_save = user_id.clone();
     let existing_artifacts_for_save = existing_artifacts.clone();
     if let Some(attachments) = req.attachments.as_ref() {
         ctx.send(
@@ -402,6 +913,7 @@ async fn chat_stream(
     tokio::spawn(async move {
         let mut final_summary = String::new();
         let mut collected_artifacts: Vec<crate::models::Artifact> = Vec::new();
+        let mut saved_artifact_ids = HashSet::new();
 
         while let Some(event) = event_rx.recv().await {
             let sse_event = match &event {
@@ -431,6 +943,14 @@ async fn chat_stream(
                 }
                 AgentEvent::Artifact { artifact } => {
                     collected_artifacts.push(artifact.clone());
+                    if saved_artifact_ids.insert(artifact.id.clone()) {
+                        save_generated_artifact_to_files(
+                            &pool_for_save,
+                            &user_id_for_save,
+                            artifact,
+                        )
+                        .await;
+                    }
                     let session_artifacts = merge_session_artifacts(
                         existing_artifacts_for_save.clone(),
                         collected_artifacts.clone(),
@@ -477,6 +997,16 @@ async fn chat_stream(
                         existing_artifacts_for_save.clone(),
                         collected_artifacts.clone(),
                     );
+                    for artifact in &collected_artifacts {
+                        if saved_artifact_ids.insert(artifact.id.clone()) {
+                            save_generated_artifact_to_files(
+                                &pool_for_save,
+                                &user_id_for_save,
+                                artifact,
+                            )
+                            .await;
+                        }
+                    }
                     let _ = session_repo::update_summary(
                         &pool_for_save,
                         &session_id_for_save,

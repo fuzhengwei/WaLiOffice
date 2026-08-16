@@ -3,7 +3,7 @@ use axum::{Json, Router};
 use serde_json::json;
 
 use crate::auth::middleware::AuthUser;
-use crate::db::{notification_repo, project_repo, session_repo, task_repo};
+use crate::db::{notification_repo, project_repo, session_repo};
 use crate::error::AppError;
 use crate::state;
 
@@ -15,7 +15,6 @@ async fn dashboard_stats(user: AuthUser) -> Result<Json<serde_json::Value>, AppE
     let pool = state::db_pool();
     let projects = project_repo::list_by_owner(&pool, &user.0.id, None)?;
     let sessions = session_repo::list_by_owner(&pool, &user.0.id, 100, None)?;
-    let task_stats = task_repo::stats(&pool, &user.0.id)?;
     let ppt_projects = project_repo::list_ppt_projects(Some(&user.0.id))?;
     let unread_notifications = notification_repo::unread_count(&pool, &user.0.id)?;
 
@@ -47,7 +46,6 @@ async fn dashboard_stats(user: AuthUser) -> Result<Json<serde_json::Value>, AppE
         .collect();
 
     Ok(Json(json!({
-        "tasks": task_stats,
         "projects": {
             "total": projects.len() + ppt_projects.len(),
             "by_kind": by_kind,

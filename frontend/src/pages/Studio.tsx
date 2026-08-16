@@ -120,7 +120,7 @@ function isMediaOnlyModel(model?: string) {
   return /^agnes-(image|video)-/i.test(model || '')
 }
 
-function pickChatModel(models: string[], fallback = 'gpt-5.5') {
+function pickChatModel(models: string[], fallback = '') {
   return models.find((model) => !isMediaOnlyModel(model)) || fallback
 }
 
@@ -184,7 +184,7 @@ export default function Studio() {
 
   // 设置 & 模型
   const [settings, setSettings] = useState<AppSettings | null>(null)
-  const [selectedModel, setSelectedModel] = useState<string>('gpt-5.5')
+  const [selectedModel, setSelectedModel] = useState<string>('')
   const [modelProfiles, setModelProfiles] = useState<LLMProfile[]>([])
 
   const activeArtifact = artifacts.find((artifact) => artifact.id === activeArtifactId) || null
@@ -221,8 +221,10 @@ export default function Studio() {
       const s = res.data as AppSettings
       setSettings(s)
       const profiles = s.llm_profiles || []
-      setModelProfiles(profiles)
-      const chatModels = Array.from(new Set(profiles.flatMap((profile) => profile.models || []))).filter((model) => !isMediaOnlyModel(model))
+      const activeProfiles = profiles.filter((profile) => profile.id === s.active_profile_id)
+      const visibleProfiles = activeProfiles.length > 0 ? activeProfiles : profiles
+      setModelProfiles(visibleProfiles)
+      const chatModels = Array.from(new Set(visibleProfiles.flatMap((profile) => profile.models || []))).filter((model) => !isMediaOnlyModel(model))
       if (s.active_model && !isMediaOnlyModel(s.active_model)) setSelectedModel(s.active_model)
       else setSelectedModel(pickChatModel(chatModels, selectedModel))
       if (s.basic?.default_theme) setSelectedTheme(s.basic.default_theme)
@@ -467,8 +469,10 @@ export default function Studio() {
       const saved = res.data as AppSettings
       setSettings(saved)
       const profiles = saved.llm_profiles || []
-      setModelProfiles(profiles)
-      const chatModels = Array.from(new Set(profiles.flatMap((profile) => profile.models || []))).filter((model) => !isMediaOnlyModel(model))
+      const activeProfiles = profiles.filter((profile) => profile.id === saved.active_profile_id)
+      const visibleProfiles = activeProfiles.length > 0 ? activeProfiles : profiles
+      setModelProfiles(visibleProfiles)
+      const chatModels = Array.from(new Set(visibleProfiles.flatMap((profile) => profile.models || []))).filter((model) => !isMediaOnlyModel(model))
       if (saved.active_model && !isMediaOnlyModel(saved.active_model)) setSelectedModel(saved.active_model)
       else setSelectedModel(pickChatModel(chatModels, selectedModel))
       if (saved.basic?.default_theme) setSelectedTheme(saved.basic.default_theme)
@@ -956,7 +960,6 @@ export default function Studio() {
               const doneArtifacts = Array.isArray(data.new_artifacts) ? data.new_artifacts : []
               setStreamPhase('done')
               setStreamStatus(doneArtifacts.length > 0 ? '生成完成' : '回复完成')
-              if (doneArtifacts.length > 0) saveGeneratedArtifactsToFiles(doneArtifacts)
               if (data.session_id) setSessionId(data.session_id)
               if (Array.isArray(data.artifacts)) {
                 data.artifacts.forEach((artifact: Artifact) => upsertArtifact(artifact))
@@ -1096,62 +1099,6 @@ export default function Studio() {
     const res = await fetch(url, { mode: 'cors' })
     if (!res.ok) throw new Error(`下载资源失败：${res.status}`)
     return res.blob()
-  }
-
-  const saveGeneratedArtifactToFiles = async (artifact: Artifact) => {
-    if (autoSavedArtifactIdsRef.current.has(artifact.id)) return
-    if (artifact.kind === 'document') {
-      const res = await docApi.exportDocx(artifact)
-      await saveGeneratedBlob(res.data as Blob, safeFilename(artifact.title, 'document', '.docx'), artifact)
-      return
-    }
-    if (artifact.kind === 'sheet') {
-      const res = await excelApi.exportXlsx(artifact)
-      await saveGeneratedBlob(res.data as Blob, safeFilename(artifact.title, 'spreadsheet', '.xlsx'), artifact)
-      return
-    }
-    if (artifact.kind === 'markdown') {
-      const markdown = artifact.content?.markdown || ''
-      if (!markdown.trim()) return
-      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
-      await saveGeneratedBlob(blob, safeFilename(artifact.title, 'document', '.md'), artifact)
-      return
-    }
-    if (artifact.kind === 'drawio') {
-      const xml = artifact.content?.xml || ''
-      if (!xml.trim()) return
-      const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' })
-      await saveGeneratedBlob(blob, safeFilename(artifact.title, 'diagram', '.drawio'), artifact)
-      return
-    }
-    if (artifact.kind === 'ppt') {
-      const projectId = artifact.content?.project_id || project?.id
-      if (!projectId) return
-      const res = await pptApi.exportPptx(projectId)
-      await saveGeneratedBlob(res.data as Blob, safeFilename(artifact.title || project?.title, 'presentation', '.pptx'), artifact)
-      return
-    }
-    if (artifact.kind === 'image') {
-      const imageUrl = artifact.content?.images?.[0]
-      if (!imageUrl) return
-      const blob = await blobFromUrl(imageUrl)
-      await saveGeneratedBlob(blob, safeFilename(artifact.title, 'image', '.png'), artifact)
-      return
-    }
-    if (artifact.kind === 'video') {
-      const videoUrl = artifact.content?.video_url
-      if (!videoUrl) return
-      const blob = await blobFromUrl(videoUrl)
-      await saveGeneratedBlob(blob, safeFilename(artifact.title, 'video', '.mp4'), artifact)
-    }
-  }
-
-  const saveGeneratedArtifactsToFiles = (items: Artifact[]) => {
-    items.forEach((artifact) => {
-      saveGeneratedArtifactToFiles(artifact).catch((err) => {
-        console.warn('Save generated artifact to files failed:', err)
-      })
-    })
   }
 
   const handleExportExcel = async (artifact: Artifact) => {
@@ -1365,7 +1312,6 @@ export default function Studio() {
           userName={useAuthStore.getState().user?.username}
           activeTool={activeTool}
           activeConversationId={sessionId}
-          activeView={activeView}
           onToolChange={handleToolChange}
           onSelectConversation={handleSelectConversation}
           onSelectProject={handleSelectProject}
@@ -1374,7 +1320,6 @@ export default function Studio() {
           onDeleteConversation={handleDeleteConversation}
           onMoveConversation={handleMoveConversation}
           onDeleteProject={handleDeleteProject}
-          onOpenSettings={() => setActiveView('settings')}
           onLogout={handleLogout}
           searchQuery={conversationQuery}
           onSearchQueryChange={setConversationQuery}

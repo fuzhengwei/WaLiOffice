@@ -1,0 +1,48 @@
+# ============================================================
+# .dockerignore — 排除不需要的文件，加速构建
+# ============================================================
+
+# 依赖目录（容器内重新安装）
+node_modules/
+frontend/node_modules/
+
+# 构建产物（容器内重新构建）
+dist/
+frontend/dist/
+server/target/
+
+# 运行时数据（不打入镜像）
+**/data/
+**/outputs/
+
+# 环境配置（敏感信息，不打入镜像）
+.env
+.local-config
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+npm-debug.log*
+
+# Docker 自身文件
+Dockerfile
+docker-compose.yml
+.dockerignore
+build.sh
+push.sh
+
+# 文档
+*.md
+docs/
