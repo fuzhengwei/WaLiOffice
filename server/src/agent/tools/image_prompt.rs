@@ -305,7 +305,7 @@ impl OfficeTool for ImagePromptTool {
             )
         };
 
-        let planner = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref());
+        let planner = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref()).await;
         let plan_response = match planner
             .chat(
                 &[

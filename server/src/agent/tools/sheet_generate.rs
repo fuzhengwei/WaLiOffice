@@ -142,7 +142,7 @@ impl OfficeTool for SheetGenerateTool {
 
         let user_prompt = format!("请根据用户需求生成结构化表格数据，结果要更接近真实业务表格，而不是演示占位数据。\n场景偏好：{scene_guide}\n用户需求：{topic}");
 
-        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref());
+        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref()).await;
         let messages = vec![
             ChatMessage {
                 role: "system".into(),

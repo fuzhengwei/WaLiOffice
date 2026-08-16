@@ -40,7 +40,7 @@ async fn list_sessions(
     Query(query): Query<SessionListQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 50, query.q.as_deref())?;
+    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 50, query.q.as_deref()).await?;
     Ok(Json(json!({ "sessions": sessions })))
 }
 
@@ -49,7 +49,8 @@ async fn get_session(
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let session = session_repo::get_session_detail(&pool, &session_id)?
+    let session = session_repo::get_session_detail(&pool, &session_id)
+        .await?
         .ok_or(AppError::NotFound("会话不存在".into()))?;
     if session.owner_id != user.0.id {
         return Err(AppError::Forbidden);
@@ -62,12 +63,13 @@ async fn get_messages(
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let session = session_repo::find_by_id(&pool, &session_id)?
+    let session = session_repo::find_by_id(&pool, &session_id)
+        .await?
         .ok_or(AppError::NotFound("会话不存在".into()))?;
     if session.owner_id != user.0.id {
         return Err(AppError::Forbidden);
     }
-    let messages = session_repo::get_messages(&pool, &session_id, 100)?;
+    let messages = session_repo::get_messages(&pool, &session_id, 100).await?;
     Ok(Json(json!({ "messages": messages })))
 }
 
@@ -84,11 +86,12 @@ async fn update_session(
         if title.is_empty() {
             return Err(AppError::BadRequest("标题不能为空".into()));
         }
-        updated |= session_repo::update_title(&pool, &session_id, &user.0.id, &title)?;
+        updated |= session_repo::update_title(&pool, &session_id, &user.0.id, &title).await?;
     }
 
     if payload.project_id.is_some() || payload.order_col.is_some() {
-        let session = session_repo::find_by_id(&pool, &session_id)?
+        let session = session_repo::find_by_id(&pool, &session_id)
+            .await?
             .ok_or(AppError::NotFound("会话不存在".into()))?;
         if session.owner_id != user.0.id {
             return Err(AppError::Forbidden);
@@ -108,7 +111,7 @@ async fn update_session(
             &user.0.id,
             project_id_owned.as_deref(),
             order_col,
-        )?;
+        ).await?;
     }
 
     Ok(Json(json!({ "updated": updated })))
@@ -119,7 +122,7 @@ async fn delete_session(
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let deleted = session_repo::delete(&pool, &session_id, &user.0.id)?;
+    let deleted = session_repo::delete(&pool, &session_id, &user.0.id).await?;
     Ok(Json(json!({ "deleted": deleted })))
 }
 
@@ -128,6 +131,6 @@ async fn clear_session(
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let cleared = session_repo::clear_messages(&pool, &session_id, &user.0.id)?;
+    let cleared = session_repo::clear_messages(&pool, &session_id, &user.0.id).await?;
     Ok(Json(json!({ "cleared": cleared })))
 }

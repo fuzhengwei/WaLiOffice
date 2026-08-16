@@ -1,8 +1,8 @@
 use super::DbPool;
 use crate::error::AppResult;
 use crate::models::PptProject;
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use std::fs;
 use std::path::PathBuf;
 
@@ -17,20 +17,27 @@ pub struct ProjectRow {
     pub updated_at: String,
 }
 
-pub fn create(
+pub async fn create(
     pool: &DbPool,
     title: &str,
     tool_kind: &str,
     owner_id: &str,
 ) -> AppResult<ProjectRow> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
+    sqlx::query(
         "INSERT INTO projects (id, title, tool_kind, owner_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![id, title, tool_kind, owner_id, &now, &now],
-    )?;
+         VALUES (?, ?, ?, ?, ?, ?)"
+    )
+    .bind(&id)
+    .bind(title)
+    .bind(tool_kind)
+    .bind(owner_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
     Ok(ProjectRow {
         id,
         title: title.to_string(),
@@ -42,86 +49,77 @@ pub fn create(
     })
 }
 
-pub fn list_by_owner(
+pub async fn list_by_owner(
     pool: &DbPool,
     owner_id: &str,
     query: Option<&str>,
 ) -> AppResult<Vec<ProjectRow>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let q = query
         .map(|item| format!("%{}%", item.trim()))
         .filter(|item| item != "%%");
-    let mut result = Vec::new();
-    if let Some(ref qv) = q {
-        let mut stmt = conn.prepare(
+
+    let rows = if let Some(ref qv) = q {
+        sqlx::query(
             "SELECT id, title, description, tool_kind, owner_id, created_at, updated_at
              FROM projects
-             WHERE owner_id = ?1 AND (title LIKE ?2 OR COALESCE(description, '') LIKE ?2)
-             ORDER BY updated_at DESC",
-        )?;
-        let rows = stmt.query_map(params![owner_id, qv], |row| {
-            Ok(ProjectRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                description: row.get(2)?,
-                tool_kind: row.get(3)?,
-                owner_id: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        })?;
-        for row in rows {
-            result.push(row?);
-        }
+             WHERE owner_id = ? AND (title LIKE ? OR COALESCE(description, '') LIKE ?)
+             ORDER BY updated_at DESC"
+        )
+        .bind(owner_id)
+        .bind(qv)
+        .bind(qv)
+        .fetch_all(pool)
+        .await?
     } else {
-        let mut stmt = conn.prepare(
+        sqlx::query(
             "SELECT id, title, description, tool_kind, owner_id, created_at, updated_at
-             FROM projects WHERE owner_id = ?1 ORDER BY updated_at DESC",
-        )?;
-        let rows = stmt.query_map(params![owner_id], |row| {
-            Ok(ProjectRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                description: row.get(2)?,
-                tool_kind: row.get(3)?,
-                owner_id: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        })?;
-        for row in rows {
-            result.push(row?);
-        }
+             FROM projects WHERE owner_id = ? ORDER BY updated_at DESC"
+        )
+        .bind(owner_id)
+        .fetch_all(pool)
+        .await?
+    };
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(ProjectRow {
+            id: row.try_get(0)?,
+            title: row.try_get(1)?,
+            description: row.try_get(2)?,
+            tool_kind: row.try_get(3)?,
+            owner_id: row.try_get(4)?,
+            created_at: row.try_get(5)?,
+            updated_at: row.try_get(6)?,
+        });
     }
     Ok(result)
 }
 
-pub fn find_by_id(pool: &DbPool, id: &str, owner_id: &str) -> AppResult<Option<ProjectRow>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let row = conn.query_row(
+pub async fn find_by_id(pool: &DbPool, id: &str, owner_id: &str) -> AppResult<Option<ProjectRow>> {
+    let row = sqlx::query(
         "SELECT id, title, description, tool_kind, owner_id, created_at, updated_at
-         FROM projects WHERE id = ?1 AND owner_id = ?2",
-        params![id, owner_id],
-        |row| {
-            Ok(ProjectRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                description: row.get(2)?,
-                tool_kind: row.get(3)?,
-                owner_id: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        },
-    );
+         FROM projects WHERE id = ? AND owner_id = ?"
+    )
+    .bind(id)
+    .bind(owner_id)
+    .fetch_optional(pool)
+    .await?;
+
     match row {
-        Ok(project) => Ok(Some(project)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
+        Some(r) => Ok(Some(ProjectRow {
+            id: r.try_get(0)?,
+            title: r.try_get(1)?,
+            description: r.try_get(2)?,
+            tool_kind: r.try_get(3)?,
+            owner_id: r.try_get(4)?,
+            created_at: r.try_get(5)?,
+            updated_at: r.try_get(6)?,
+        })),
+        None => Ok(None),
     }
 }
 
-pub fn update(
+pub async fn update(
     pool: &DbPool,
     id: &str,
     owner_id: &str,
@@ -129,12 +127,11 @@ pub fn update(
     description: Option<Option<&str>>,
     tool_kind: Option<&str>,
 ) -> AppResult<Option<ProjectRow>> {
-    let current = match find_by_id(pool, id, owner_id)? {
+    let current = match find_by_id(pool, id, owner_id).await? {
         Some(project) => project,
         None => return Ok(None),
     };
 
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let now = chrono::Utc::now().to_rfc3339();
     let next_title = title.unwrap_or(&current.title);
     let next_description = description
@@ -142,19 +139,19 @@ pub fn update(
         .unwrap_or(current.description.clone());
     let next_tool_kind = tool_kind.unwrap_or(&current.tool_kind);
 
-    conn.execute(
+    sqlx::query(
         "UPDATE projects
-         SET title = ?1, description = ?2, tool_kind = ?3, updated_at = ?4
-         WHERE id = ?5 AND owner_id = ?6",
-        params![
-            next_title,
-            next_description,
-            next_tool_kind,
-            &now,
-            id,
-            owner_id
-        ],
-    )?;
+         SET title = ?, description = ?, tool_kind = ?, updated_at = ?
+         WHERE id = ? AND owner_id = ?"
+    )
+    .bind(next_title)
+    .bind(&next_description)
+    .bind(next_tool_kind)
+    .bind(&now)
+    .bind(id)
+    .bind(owner_id)
+    .execute(pool)
+    .await?;
 
     Ok(Some(ProjectRow {
         id: current.id,
@@ -167,14 +164,18 @@ pub fn update(
     }))
 }
 
-pub fn delete(pool: &DbPool, id: &str, owner_id: &str) -> AppResult<bool> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let affected = conn.execute(
-        "DELETE FROM projects WHERE id = ?1 AND owner_id = ?2",
-        params![id, owner_id],
-    )?;
-    Ok(affected > 0)
+pub async fn delete(pool: &DbPool, id: &str, owner_id: &str) -> AppResult<bool> {
+    let result = sqlx::query(
+        "DELETE FROM projects WHERE id = ? AND owner_id = ?"
+    )
+    .bind(id)
+    .bind(owner_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
+
+// ── PPT Project file-based storage (unchanged) ──
 
 fn project_path(project_id: &str) -> PathBuf {
     PathBuf::from(&crate::config::config().projects_dir).join(format!("{project_id}.json"))

@@ -136,7 +136,7 @@ XML 格式示例：
 
         let user_prompt = format!("请生成一张{diagram_type}图表，要求既便于阅读，也便于后续在 draw.io 中继续编辑。\n场景偏好：{scene_guide}\n需求：{topic}");
 
-        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref());
+        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref()).await;
         let messages = vec![
             ChatMessage {
                 role: "system".into(),

@@ -54,11 +54,11 @@ const toolColors: Record<ToolKind, string> = {
 
 const toolLabel: Record<ToolKind, string> = {
   general: '综合',
-  ppt: 'PPT',
-  doc: 'docx',
+  doc: 'word',
+  excel: 'excel',
+  ppt: 'ppt',
   drawio: 'draw.io',
-  excel: 'Excel',
-  image: '图像',
+  image: '图象',
   video: '视频',
   code: 'Code',
 }

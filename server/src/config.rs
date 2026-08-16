@@ -45,6 +45,10 @@ pub struct Config {
     pub render_output_dir: String,
 
     pub cors_origins: Vec<String>,
+
+    // 数据库配置
+    pub database_url: String,
+    pub db_max_connections: u32,
 }
 
 impl Config {
@@ -110,6 +114,10 @@ impl Config {
         let llm_api_key = llm_text_api_key.clone();
         let llm_api_keys = llm_text_api_keys.clone();
 
+        // 数据库配置：如果不配 DATABASE_URL，默认使用 SQLite
+        let data_dir = env_or("AIPPT_DATA_DIR", "data");
+        let database_url = env_or("DATABASE_URL", &format!("sqlite://{}/walioffice.db?mode=rwc", data_dir));
+
         Ok(Self {
             app_name: env_or("AIPPT_APP_NAME", "WaLiOffice"),
             host: env_or("AIPPT_HOST", "0.0.0.0"),
@@ -159,7 +167,7 @@ impl Config {
                 "http://appbuilder.baidu.com/v2/ai_search/mcp/sse",
             ),
 
-            data_dir: env_or("AIPPT_DATA_DIR", "data"),
+            data_dir: data_dir.clone(),
             projects_dir: env_or("AIPPT_PROJECTS_DIR", "data/projects"),
             sessions_dir: env_or("AIPPT_SESSIONS_DIR", "data/sessions"),
             render_output_dir: env_or("AIPPT_RENDER_OUTPUT_DIR", "outputs"),
@@ -169,6 +177,9 @@ impl Config {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
+
+            database_url,
+            db_max_connections: env_or("DB_MAX_CONNECTIONS", "8").parse().unwrap_or(8),
         })
     }
 
@@ -182,6 +193,11 @@ impl Config {
             std::fs::create_dir_all(dir)?;
         }
         Ok(())
+    }
+
+    /// 判断是否使用 MySQL
+    pub fn is_mysql(&self) -> bool {
+        self.database_url.starts_with("mysql://")
     }
 }
 

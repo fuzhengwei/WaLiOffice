@@ -466,7 +466,7 @@ export function ChatPanel({
     if (artifact.kind === 'markdown') return 'Markdown 文档已生成，支持右侧渲染和 .md 下载。'
     if (artifact.kind === 'drawio') return '图表已生成，支持右侧预览/编辑，也可以下载 draw.io 源文件。'
     if (artifact.kind === 'sheet') return '表格数据已生成，支持右侧查看并导出为 Excel。'
-    if (artifact.kind === 'image') return '图像结果已生成，可在右侧查看详情。'
+    if (artifact.kind === 'image') return '图象结果已生成，可在右侧查看详情。'
     if (artifact.kind === 'video') return '视频结果已生成，可在右侧直接播放和下载 mp4。'
     if (artifact.kind === 'search') return `已生成搜索结果卡片，来源：${artifact.content?.provider_label || artifact.content?.provider || '未知来源'}。`
     if (artifact.kind === 'code') return '代码结果已生成，可在右侧查看步骤与内容。'

@@ -19,7 +19,8 @@ pub fn router() -> Router {
 
 async fn login(Json(req): Json<LoginRequest>) -> Result<Json<TokenResponse>, AppError> {
     let pool = state::db_pool();
-    let (user, hash) = user_repo::find_by_username(&pool, &req.username)?
+    let (user, hash) = user_repo::find_by_username(&pool, &req.username)
+        .await?
         .ok_or(AppError::BadRequest("用户名或密码错误".into()))?;
 
     if !user_repo::verify_password(&hash, &req.password) {
@@ -86,7 +87,7 @@ async fn login_with_verification(
         .and_then(extract_openid_from_x_api_token)
         .unwrap_or_else(|| code.to_string());
     let username = format!("wx_{external_id}");
-    let user = user_repo::find_or_create_external(&pool, &username)?;
+    let user = user_repo::find_or_create_external(&pool, &username).await?;
     let token = crate::auth::create_token(&user)?;
 
     Ok(Json(TokenResponse {
@@ -112,12 +113,12 @@ async fn register(Json(req): Json<RegisterRequest>) -> Result<Json<TokenResponse
     }
 
     let pool = state::db_pool();
-    if user_repo::find_by_username(&pool, &req.username)?.is_some() {
+    if user_repo::find_by_username(&pool, &req.username).await?.is_some() {
         return Err(AppError::BadRequest("用户名已存在".into()));
     }
 
     let hash = user_repo::hash_password(&req.password)?;
-    let user = user_repo::create(&pool, &req.username, req.email.as_deref(), &hash)?;
+    let user = user_repo::create(&pool, &req.username, req.email.as_deref(), &hash).await?;
     let token = crate::auth::create_token(&user)?;
 
     Ok(Json(TokenResponse {

@@ -1,88 +1,76 @@
 use super::DbPool;
 use crate::error::AppResult;
 use crate::models::User;
-use rusqlite::params;
 
-pub fn find_by_username(pool: &DbPool, username: &str) -> AppResult<Option<(User, String)>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let row = conn.query_row(
-        "SELECT id, username, email, password_hash, avatar, role FROM users WHERE username = ?1",
-        params![username],
-        |row| {
-            Ok((
-                User {
-                    id: row.get(0)?,
-                    username: row.get(1)?,
-                    email: row.get(2)?,
-                    avatar: row.get(4)?,
-                    role: row.get(5)?,
-                },
-                row.get::<_, String>(3)?,
-            ))
-        },
-    );
+pub async fn find_by_username(pool: &DbPool, username: &str) -> AppResult<Option<(User, String)>> {
+    let row = sqlx::query(
+        "SELECT id, username, email, password_hash, avatar, role FROM users WHERE username = ?"
+    )
+    .bind(username)
+    .fetch_optional(pool)
+    .await?;
+
     match row {
-        Ok((user, hash)) => Ok(Some((user, hash))),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
+        Some(r) => {
+            let id: String = r.try_get(0)?;
+            let username: String = r.try_get(1)?;
+            let email: Option<String> = r.try_get(2)?;
+            let password_hash: String = r.try_get(3)?;
+            let avatar: Option<String> = r.try_get(4)?;
+            let role: String = r.try_get(5)?;
+            Ok(Some((
+                User { id, username, email, avatar, role },
+                password_hash,
+            )))
+        }
+        None => Ok(None),
     }
 }
 
-pub fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<User>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let row = conn.query_row(
-        "SELECT id, username, email, avatar, role FROM users WHERE id = ?1",
-        params![id],
-        |row| {
-            Ok(User {
-                id: row.get(0)?,
-                username: row.get(1)?,
-                email: row.get(2)?,
-                avatar: row.get(3)?,
-                role: row.get(4)?,
-            })
-        },
-    );
+pub async fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<User>> {
+    let row = sqlx::query(
+        "SELECT id, username, email, avatar, role FROM users WHERE id = ?"
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
     match row {
-        Ok(user) => Ok(Some(user)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
+        Some(r) => {
+            let user = User {
+                id: r.try_get(0)?,
+                username: r.try_get(1)?,
+                email: r.try_get(2)?,
+                avatar: r.try_get(3)?,
+                role: r.try_get(4)?,
+            };
+            Ok(Some(user))
+        }
+        None => Ok(None),
     }
 }
 
-pub fn create(
+pub async fn create(
     pool: &DbPool,
-    username: &str,
-    email: Option<&str>,
-    password_hash: &str,
-) -> AppResult<User> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    create_with_conn(&conn, username, email, password_hash)
-}
-
-pub fn find_or_create_external(pool: &DbPool, username: &str) -> AppResult<User> {
-    if let Some((user, _)) = find_by_username(pool, username)? {
-        return Ok(user);
-    }
-
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let password_hash = hash_password(&uuid::Uuid::new_v4().to_string())?;
-    create_with_conn(&conn, username, None, &password_hash)
-}
-
-fn create_with_conn(
-    conn: &rusqlite::Connection,
     username: &str,
     email: Option<&str>,
     password_hash: &str,
 ) -> AppResult<User> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
+    sqlx::query(
         "INSERT INTO users (id, username, email, password_hash, role, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 'user', ?5, ?6)",
-        params![id, username, email, password_hash, &now, &now],
-    )?;
+         VALUES (?, ?, ?, ?, 'user', ?, ?)"
+    )
+    .bind(&id)
+    .bind(username)
+    .bind(email)
+    .bind(password_hash)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
     Ok(User {
         id,
         username: username.to_string(),
@@ -92,6 +80,15 @@ fn create_with_conn(
     })
 }
 
+pub async fn find_or_create_external(pool: &DbPool, username: &str) -> AppResult<User> {
+    if let Some((user, _)) = find_by_username(pool, username).await? {
+        return Ok(user);
+    }
+
+    let password_hash = hash_password(&uuid::Uuid::new_v4().to_string())?;
+    create(pool, username, None, &password_hash).await
+}
+
 pub fn verify_password(hash: &str, password: &str) -> bool {
     bcrypt::verify(password, hash).unwrap_or(false)
 }
@@ -99,3 +96,5 @@ pub fn verify_password(hash: &str, password: &str) -> bool {
 pub fn hash_password(password: &str) -> AppResult<String> {
     Ok(bcrypt::hash(password, 10)?)
 }
+
+use sqlx::Row;

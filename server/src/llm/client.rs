@@ -151,11 +151,12 @@ impl LlmClient {
         client
     }
 
-    pub fn for_user(user_id: &str, preferred_model: Option<&str>) -> Self {
+    pub async fn for_user(user_id: &str, preferred_model: Option<&str>) -> Self {
         let mut client = Self::new();
         let pool = crate::state::db_pool();
 
         let settings = crate::db::settings_repo::find_by_user(&pool, user_id)
+            .await
             .ok()
             .flatten();
 

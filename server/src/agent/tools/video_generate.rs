@@ -338,7 +338,7 @@ impl OfficeTool for VideoGenerateTool {
             image_inputs.len()
         );
 
-        let planner = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref());
+        let planner = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref()).await;
         let mut plan = match planner
             .chat(
                 &[

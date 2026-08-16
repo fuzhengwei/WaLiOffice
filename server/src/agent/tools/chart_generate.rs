@@ -79,7 +79,7 @@ impl OfficeTool for ChartGenerateTool {
 - 不要输出占位符、解释文本或代码块"#;
 
         let user_prompt = format!("用户想在对话中增强可视化体验，请生成一个可直接渲染的图表。\n用户需求：{topic}\n偏好图表类型：{preferred_type}");
-        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref());
+        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref()).await;
         let messages = vec![
             ChatMessage {
                 role: "system".into(),

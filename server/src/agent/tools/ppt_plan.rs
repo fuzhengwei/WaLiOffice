@@ -125,7 +125,7 @@ impl OfficeTool for PptPlanTool {
             }),
         );
 
-        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref());
+        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref()).await;
         let scene_guide = infer_ppt_scene(topic);
 
         let prompt = format!(

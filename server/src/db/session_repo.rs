@@ -1,8 +1,8 @@
 use super::DbPool;
 use crate::error::AppResult;
 use crate::models::{Artifact, ChatMessage, PersistedChatMessage};
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRow {
@@ -34,21 +34,31 @@ pub struct SessionDetail {
     pub artifacts: Vec<Artifact>,
 }
 
-pub fn create(
+pub async fn create(
     pool: &DbPool,
     owner_id: &str,
     project_id: Option<&str>,
     tool_kind: Option<&str>,
     title: &str,
 ) -> AppResult<SessionRow> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
+    let order_val = chrono::Utc::now().timestamp();
+    sqlx::query(
         "INSERT INTO sessions (id, owner_id, project_id, tool_kind, title, message_count, order_col, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, strftime('%s','now'), ?6, ?7)",
-        params![id, owner_id, project_id, tool_kind, title, &now, &now],
-    )?;
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)"
+    )
+    .bind(&id)
+    .bind(owner_id)
+    .bind(project_id)
+    .bind(tool_kind)
+    .bind(title)
+    .bind(order_val)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
     Ok(SessionRow {
         id,
         owner_id: owner_id.to_string(),
@@ -57,174 +67,202 @@ pub fn create(
         title: title.to_string(),
         summary: None,
         message_count: 0,
-        order_col: chrono::Utc::now().timestamp(),
+        order_col: order_val,
         created_at: now.clone(),
         updated_at: now,
     })
 }
 
-pub fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<SessionRow>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let row = conn.query_row(
+pub async fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<SessionRow>> {
+    let row = sqlx::query(
         "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, order_col, created_at, updated_at
-         FROM sessions WHERE id = ?1",
-        params![id],
-        |row| Ok(SessionRow {
-            id: row.get(0)?, owner_id: row.get(1)?, project_id: row.get(2)?, tool_kind: row.get(3)?,
-            title: row.get(4)?, summary: row.get(5)?, message_count: row.get(6)?, order_col: row.get(7)?,
-            created_at: row.get(8)?, updated_at: row.get(9)?,
-        }),
-    );
+         FROM sessions WHERE id = ?"
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
     match row {
-        Ok(s) => Ok(Some(s)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
+        Some(r) => Ok(Some(SessionRow {
+            id: r.try_get(0)?,
+            owner_id: r.try_get(1)?,
+            project_id: r.try_get(2)?,
+            tool_kind: r.try_get(3)?,
+            title: r.try_get(4)?,
+            summary: r.try_get(5)?,
+            message_count: r.try_get(6)?,
+            order_col: r.try_get(7)?,
+            created_at: r.try_get(8)?,
+            updated_at: r.try_get(9)?,
+        })),
+        None => Ok(None),
     }
 }
 
-pub fn list_by_owner(
+pub async fn list_by_owner(
     pool: &DbPool,
     owner_id: &str,
     limit: i64,
     query: Option<&str>,
 ) -> AppResult<Vec<SessionRow>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let q = query
         .map(|item| format!("%{}%", item.trim()))
         .filter(|item| item != "%%");
-    let mut result = Vec::new();
-    if let Some(ref qv) = q {
-        let mut stmt = conn.prepare(
+
+    let rows = if let Some(ref qv) = q {
+        sqlx::query(
             "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, order_col, created_at, updated_at
              FROM sessions
-             WHERE owner_id = ?1 AND (title LIKE ?2 OR COALESCE(summary, '') LIKE ?2)
-             ORDER BY order_col ASC, updated_at DESC LIMIT ?3"
-        )?;
-        let rows = stmt.query_map(params![owner_id, qv, limit], |row| {
-            Ok(SessionRow {
-                id: row.get(0)?,
-                owner_id: row.get(1)?,
-                project_id: row.get(2)?,
-                tool_kind: row.get(3)?,
-                title: row.get(4)?,
-                summary: row.get(5)?,
-                message_count: row.get(6)?,
-                order_col: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
-            })
-        })?;
-        for row in rows {
-            result.push(row?);
-        }
+             WHERE owner_id = ? AND (title LIKE ? OR COALESCE(summary, '') LIKE ?)
+             ORDER BY order_col ASC, updated_at DESC LIMIT ?"
+        )
+        .bind(owner_id)
+        .bind(qv)
+        .bind(qv)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?
     } else {
-        let mut stmt = conn.prepare(
+        sqlx::query(
             "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, order_col, created_at, updated_at
-             FROM sessions WHERE owner_id = ?1 ORDER BY order_col ASC, updated_at DESC LIMIT ?2"
-        )?;
-        let rows = stmt.query_map(params![owner_id, limit], |row| {
-            Ok(SessionRow {
-                id: row.get(0)?,
-                owner_id: row.get(1)?,
-                project_id: row.get(2)?,
-                tool_kind: row.get(3)?,
-                title: row.get(4)?,
-                summary: row.get(5)?,
-                message_count: row.get(6)?,
-                order_col: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
-            })
-        })?;
-        for row in rows {
-            result.push(row?);
-        }
+             FROM sessions WHERE owner_id = ? ORDER BY order_col ASC, updated_at DESC LIMIT ?"
+        )
+        .bind(owner_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?
+    };
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(SessionRow {
+            id: row.try_get(0)?,
+            owner_id: row.try_get(1)?,
+            project_id: row.try_get(2)?,
+            tool_kind: row.try_get(3)?,
+            title: row.try_get(4)?,
+            summary: row.try_get(5)?,
+            message_count: row.try_get(6)?,
+            order_col: row.try_get(7)?,
+            created_at: row.try_get(8)?,
+            updated_at: row.try_get(9)?,
+        });
     }
     Ok(result)
 }
 
-pub fn update_summary(pool: &DbPool, session_id: &str, summary: &str) -> AppResult<()> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+pub async fn update_summary(pool: &DbPool, session_id: &str, summary: &str) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
-        "UPDATE sessions SET summary = ?1, updated_at = ?2 WHERE id = ?3",
-        params![summary, &now, session_id],
-    )?;
+    sqlx::query(
+        "UPDATE sessions SET summary = ?, updated_at = ? WHERE id = ?"
+    )
+    .bind(summary)
+    .bind(&now)
+    .bind(session_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
-pub fn update_title(
+pub async fn update_title(
     pool: &DbPool,
     session_id: &str,
     owner_id: &str,
     title: &str,
 ) -> AppResult<bool> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let now = chrono::Utc::now().to_rfc3339();
-    let affected = conn.execute(
-        "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3 AND owner_id = ?4",
-        params![title, &now, session_id, owner_id],
-    )?;
-    Ok(affected > 0)
+    let result = sqlx::query(
+        "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ? AND owner_id = ?"
+    )
+    .bind(title)
+    .bind(&now)
+    .bind(session_id)
+    .bind(owner_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
-pub fn update_project_and_order(
+pub async fn update_project_and_order(
     pool: &DbPool,
     session_id: &str,
     owner_id: &str,
     project_id: Option<&str>,
     order_col: i64,
 ) -> AppResult<bool> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let affected = conn.execute(
-        "UPDATE sessions SET project_id = ?1, order_col = ?2 WHERE id = ?3 AND owner_id = ?4",
-        params![project_id, order_col, session_id, owner_id],
-    )?;
-    Ok(affected > 0)
+    let result = sqlx::query(
+        "UPDATE sessions SET project_id = ?, order_col = ? WHERE id = ? AND owner_id = ?"
+    )
+    .bind(project_id)
+    .bind(order_col)
+    .bind(session_id)
+    .bind(owner_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
-pub fn save_artifacts(pool: &DbPool, session_id: &str, artifacts: &[Artifact]) -> AppResult<()> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+pub async fn save_artifacts(pool: &DbPool, session_id: &str, artifacts: &[Artifact]) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let payload = serde_json::to_string(artifacts)?;
-    conn.execute(
-        "INSERT INTO session_artifacts (id, session_id, payload, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(session_id) DO UPDATE SET
-           payload = excluded.payload,
-           updated_at = excluded.updated_at",
-        params![
-            uuid::Uuid::new_v4().to_string(),
-            session_id,
-            payload,
-            &now,
-            &now
-        ],
-    )?;
+    let id = uuid::Uuid::new_v4().to_string();
+
+    // 使用 UPSERT：SQLite 用 ON CONFLICT，MySQL 用 ON DUPLICATE KEY UPDATE
+    let cfg = crate::config::config();
+    if cfg.is_mysql() {
+        sqlx::query(
+            "INSERT INTO session_artifacts (id, session_id, payload, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)"
+        )
+        .bind(&id)
+        .bind(session_id)
+        .bind(&payload)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO session_artifacts (id, session_id, payload, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(session_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at"
+        )
+        .bind(&id)
+        .bind(session_id)
+        .bind(&payload)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 
-pub fn get_artifacts(pool: &DbPool, session_id: &str) -> AppResult<Vec<Artifact>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let row = conn.query_row(
-        "SELECT payload FROM session_artifacts WHERE session_id = ?1",
-        params![session_id],
-        |row| row.get::<_, String>(0),
-    );
+pub async fn get_artifacts(pool: &DbPool, session_id: &str) -> AppResult<Vec<Artifact>> {
+    let row = sqlx::query(
+        "SELECT payload FROM session_artifacts WHERE session_id = ?"
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?;
+
     match row {
-        Ok(payload) => Ok(serde_json::from_str::<Vec<Artifact>>(&payload)?),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(vec![]),
-        Err(e) => Err(e.into()),
+        Some(r) => {
+            let payload: String = r.try_get(0)?;
+            Ok(serde_json::from_str::<Vec<Artifact>>(&payload)?)
+        }
+        None => Ok(vec![]),
     }
 }
 
-pub fn get_session_detail(pool: &DbPool, session_id: &str) -> AppResult<Option<SessionDetail>> {
-    let session = match find_by_id(pool, session_id)? {
+pub async fn get_session_detail(pool: &DbPool, session_id: &str) -> AppResult<Option<SessionDetail>> {
+    let session = match find_by_id(pool, session_id).await? {
         Some(session) => session,
         None => return Ok(None),
     };
-    let messages = get_persisted_messages(pool, session_id, 100)?;
-    let artifacts = get_artifacts(pool, session_id)?;
+    let messages = get_persisted_messages(pool, session_id, 100).await?;
+    let artifacts = get_artifacts(pool, session_id).await?;
     Ok(Some(SessionDetail {
         id: session.id,
         owner_id: session.owner_id,
@@ -241,8 +279,7 @@ pub fn get_session_detail(pool: &DbPool, session_id: &str) -> AppResult<Option<S
     }))
 }
 
-pub fn add_message(pool: &DbPool, session_id: &str, msg: &ChatMessage) -> AppResult<()> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+pub async fn add_message(pool: &DbPool, session_id: &str, msg: &ChatMessage) -> AppResult<()> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let tool_name: Option<String> = None;
@@ -251,107 +288,129 @@ pub fn add_message(pool: &DbPool, session_id: &str, msg: &ChatMessage) -> AppRes
         .as_ref()
         .map(|t| serde_json::to_string(t).unwrap_or_default());
     let tool_output: Option<String> = msg.tool_call_id.clone();
-    conn.execute(
+    sqlx::query(
         "INSERT INTO messages (id, session_id, role, content, tool_name, tool_input, tool_output, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![id, session_id, msg.role, msg.content, tool_name, tool_input, tool_output, &now],
-    )?;
-    conn.execute(
-        "UPDATE sessions SET message_count = message_count + 1, updated_at = ?1 WHERE id = ?2",
-        params![&now, session_id],
-    )?;
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(&id)
+    .bind(session_id)
+    .bind(&msg.role)
+    .bind(&msg.content)
+    .bind(&tool_name)
+    .bind(&tool_input)
+    .bind(&tool_output)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "UPDATE sessions SET message_count = message_count + 1, updated_at = ? WHERE id = ?"
+    )
+    .bind(&now)
+    .bind(session_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
-pub fn get_messages(pool: &DbPool, session_id: &str, limit: i64) -> AppResult<Vec<ChatMessage>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let mut stmt = conn.prepare(
+pub async fn get_messages(pool: &DbPool, session_id: &str, limit: i64) -> AppResult<Vec<ChatMessage>> {
+    let rows = sqlx::query(
         "SELECT role, content, tool_input, tool_output FROM messages
-         WHERE session_id = ?1 ORDER BY created_at ASC LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(params![session_id, limit], |row| {
-        let role: String = row.get(0)?;
-        let content: String = row.get(1)?;
-        let tool_input: Option<String> = row.get(2)?;
-        let tool_output: Option<String> = row.get(3)?;
+         WHERE session_id = ? ORDER BY created_at ASC LIMIT ?"
+    )
+    .bind(session_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        let role: String = row.try_get(0)?;
+        let content: String = row.try_get(1)?;
+        let tool_input: Option<String> = row.try_get(2)?;
+        let tool_output: Option<String> = row.try_get(3)?;
         let tool_calls = tool_input.and_then(|s| serde_json::from_str(&s).ok());
         let tool_call_id = tool_output;
-        Ok(ChatMessage {
+        result.push(ChatMessage {
             role,
             content,
             tool_calls,
             tool_call_id,
-        })
-    })?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
+        });
     }
     Ok(result)
 }
 
-pub fn get_persisted_messages(
+pub async fn get_persisted_messages(
     pool: &DbPool,
     session_id: &str,
     limit: i64,
 ) -> AppResult<Vec<PersistedChatMessage>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let mut stmt = conn.prepare(
+    let rows = sqlx::query(
         "SELECT role, content, tool_input, tool_output, created_at FROM messages
-         WHERE session_id = ?1 ORDER BY created_at ASC LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(params![session_id, limit], |row| {
-        let role: String = row.get(0)?;
-        let content: String = row.get(1)?;
-        let tool_input: Option<String> = row.get(2)?;
-        let tool_output: Option<String> = row.get(3)?;
-        let created_at: String = row.get(4)?;
+         WHERE session_id = ? ORDER BY created_at ASC LIMIT ?"
+    )
+    .bind(session_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        let role: String = row.try_get(0)?;
+        let content: String = row.try_get(1)?;
+        let tool_input: Option<String> = row.try_get(2)?;
+        let tool_output: Option<String> = row.try_get(3)?;
+        let created_at: String = row.try_get(4)?;
         let tool_calls = tool_input.and_then(|s| serde_json::from_str(&s).ok());
-        Ok(PersistedChatMessage {
+        result.push(PersistedChatMessage {
             role,
             content,
             tool_calls,
             tool_call_id: tool_output,
             created_at,
-        })
-    })?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
+        });
     }
     Ok(result)
 }
 
-pub fn delete(pool: &DbPool, session_id: &str, owner_id: &str) -> AppResult<bool> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let affected = conn.execute(
-        "DELETE FROM sessions WHERE id = ?1 AND owner_id = ?2",
-        params![session_id, owner_id],
-    )?;
-    Ok(affected > 0)
+pub async fn delete(pool: &DbPool, session_id: &str, owner_id: &str) -> AppResult<bool> {
+    let result = sqlx::query(
+        "DELETE FROM sessions WHERE id = ? AND owner_id = ?"
+    )
+    .bind(session_id)
+    .bind(owner_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
-pub fn clear_messages(pool: &DbPool, session_id: &str, owner_id: &str) -> AppResult<bool> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+pub async fn clear_messages(pool: &DbPool, session_id: &str, owner_id: &str) -> AppResult<bool> {
     // 验证所有权
-    let session: Option<String> = conn
-        .query_row(
-            "SELECT id FROM sessions WHERE id = ?1 AND owner_id = ?2",
-            params![session_id, owner_id],
-            |r| r.get(0),
-        )
-        .ok();
+    let session = sqlx::query(
+        "SELECT id FROM sessions WHERE id = ? AND owner_id = ?"
+    )
+    .bind(session_id)
+    .bind(owner_id)
+    .fetch_optional(pool)
+    .await?;
+
     if session.is_none() {
         return Ok(false);
     }
-    conn.execute(
-        "DELETE FROM messages WHERE session_id = ?1",
-        params![session_id],
-    )?;
+
+    sqlx::query("DELETE FROM messages WHERE session_id = ?")
+        .bind(session_id)
+        .execute(pool)
+        .await?;
+
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
-        "UPDATE sessions SET message_count = 0, updated_at = ?1 WHERE id = ?2",
-        params![&now, session_id],
-    )?;
+    sqlx::query(
+        "UPDATE sessions SET message_count = 0, updated_at = ? WHERE id = ?"
+    )
+    .bind(&now)
+    .bind(session_id)
+    .execute(pool)
+    .await?;
     Ok(true)
 }

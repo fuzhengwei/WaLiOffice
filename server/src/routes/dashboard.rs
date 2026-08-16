@@ -13,10 +13,10 @@ pub fn router() -> Router {
 
 async fn dashboard_stats(user: AuthUser) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let projects = project_repo::list_by_owner(&pool, &user.0.id, None)?;
-    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 100, None)?;
+    let projects = project_repo::list_by_owner(&pool, &user.0.id, None).await?;
+    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 100, None).await?;
     let ppt_projects = project_repo::list_ppt_projects(Some(&user.0.id))?;
-    let unread_notifications = notification_repo::unread_count(&pool, &user.0.id)?;
+    let unread_notifications = notification_repo::unread_count(&pool, &user.0.id).await?;
 
     let mut by_kind = serde_json::Map::new();
     for project in &projects {

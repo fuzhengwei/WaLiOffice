@@ -258,7 +258,7 @@ pub fn import_startup_llm_profile(settings: &mut AppSettings) {
 
 async fn get_settings(user: AuthUser) -> Result<Json<AppSettings>, AppError> {
     let pool = state::db_pool();
-    let settings = settings_repo::find_by_user(&pool, &user.0.id)?.unwrap_or_else(default_settings);
+    let settings = settings_repo::find_by_user(&pool, &user.0.id).await?.unwrap_or_else(default_settings);
     Ok(Json(normalize_settings(settings)?))
 }
 
@@ -268,7 +268,7 @@ async fn save_settings(
 ) -> Result<Json<AppSettings>, AppError> {
     let pool = state::db_pool();
     let normalized = normalize_settings(payload)?;
-    let saved = settings_repo::save_for_user(&pool, &user.0.id, &normalized)?;
+    let saved = settings_repo::save_for_user(&pool, &user.0.id, &normalized).await?;
     Ok(Json(saved))
 }
 

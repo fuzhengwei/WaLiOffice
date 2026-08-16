@@ -15,7 +15,7 @@ pub enum AppError {
     #[error("参数错误: {0}")]
     BadRequest(String),
     #[error("数据库错误: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(#[from] sqlx::Error),
     #[error("LLM 调用失败: {0}")]
     Llm(String),
     #[error("工具执行失败: {0}")]

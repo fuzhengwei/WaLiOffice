@@ -166,7 +166,7 @@ impl OfficeTool for MarkdownGenerateTool {
             if audience.is_empty() { String::new() } else { format!("目标读者：{audience}\n") }
         );
 
-        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref());
+        let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref()).await;
         let messages = vec![
             ChatMessage {
                 role: "system".into(),

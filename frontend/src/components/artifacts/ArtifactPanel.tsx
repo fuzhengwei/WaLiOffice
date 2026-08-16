@@ -44,7 +44,7 @@ function createFallbackDrawioXml(title = '综合 Agent 工作台流程') {
 
 function EmptyArtifact({ activeTool }: { activeTool: ToolKind }) {
   const labels: Record<string, string> = {
-    general: '综合任务产物', ppt: 'PPT 演示文稿', doc: '文档', drawio: 'draw.io 图表', excel: '在线表格', image: '图像结果', video: '视频结果', code: '代码结果',
+    general: '综合任务产物', ppt: 'PPT 演示文稿', doc: '文档', drawio: 'draw.io 图表', excel: '在线表格', image: '图象结果', video: '视频结果', code: '代码结果',
   }
   return (
     <div className="max-w-md text-center text-surface-400">
@@ -443,7 +443,7 @@ function downloadFromUrl(url: string, filename: string) {
 }
 
 function ImageArtifact({ artifact }: { artifact: Artifact }) {
-  const prompt = artifact.content?.prompt || '等待图像 Agent 生成提示词或图片。'
+  const prompt = artifact.content?.prompt || '等待图象 Agent 生成提示词或图片。'
   const images: string[] = artifact.content?.images || []
   const variants: Array<{ style?: string; prompt?: string; url?: string }> = artifact.content?.variants || artifact.content?.data?.prompts || []
   const [previewImage, setPreviewImage] = useState<string | null>(null)
@@ -514,7 +514,7 @@ function ImageArtifact({ artifact }: { artifact: Artifact }) {
         </div>
       )}
       <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">
-        <div className="mb-1 text-xs font-semibold text-surface-400">图像提示词</div>
+        <div className="mb-1 text-xs font-semibold text-surface-400">图象提示词</div>
         {prompt}
       </div>
       {variants.length > 0 && (
@@ -777,7 +777,7 @@ export function ArtifactPanel({
   if (!isOpen) return null
 
   const titleMap: Record<string, string> = {
-    general: '动态成果展示', ppt: 'PPT 预览', doc: '文档预览', drawio: 'draw.io 画布', excel: '在线 Excel', image: '图像结果', video: '视频结果', code: '代码结果', search: '搜索结果',
+    general: '动态成果展示', ppt: 'PPT 预览', doc: '文档预览', drawio: 'draw.io 画布', excel: '在线 Excel', image: '图象结果', video: '视频结果', code: '代码结果', search: '搜索结果',
   }
   const artifactKindLabel: Record<string, string> = {
     document: 'Word',

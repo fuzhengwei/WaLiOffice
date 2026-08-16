@@ -443,7 +443,7 @@ impl OfficeTool for PptGenerateTool {
             }
         } else {
             // 没有预规划，用 LLM 生成
-            let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref());
+            let client = LlmClient::for_user(&ctx.user_id, ctx.preferred_model.as_deref()).await;
             match generate_plan_with_llm(&client, &title, &topic).await {
                 Ok(p) => p,
                 Err(_) => fallback_plan(&title, &topic),

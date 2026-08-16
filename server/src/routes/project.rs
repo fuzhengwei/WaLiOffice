@@ -54,7 +54,7 @@ async fn list_projects(
     Query(query): Query<ProjectListQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let projects = project_repo::list_by_owner(&pool, &user.0.id, query.q.as_deref())?;
+    let projects = project_repo::list_by_owner(&pool, &user.0.id, query.q.as_deref()).await?;
     Ok(Json(json!({ "projects": projects })))
 }
 
@@ -77,7 +77,7 @@ async fn create_project(
         &req.title,
         req.tool_kind.as_deref().unwrap_or("general"),
         &user.0.id,
-    )?;
+    ).await?;
     if req.description.is_some() {
         let updated = project_repo::update(
             &pool,
@@ -86,7 +86,7 @@ async fn create_project(
             None,
             Some(req.description.as_deref()),
             None,
-        )?;
+        ).await?;
         return Ok(Json(json!(updated.unwrap_or(project))));
     }
     Ok(Json(json!(project)))
@@ -97,7 +97,8 @@ async fn get_project(
     Path(project_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let project = project_repo::find_by_id(&pool, &project_id, &user.0.id)?
+    let project = project_repo::find_by_id(&pool, &project_id, &user.0.id)
+        .await?
         .ok_or(AppError::NotFound("项目不存在".into()))?;
     Ok(Json(json!(project)))
 }
@@ -125,7 +126,7 @@ async fn update_project(
         req.title.as_deref(),
         Some(req.description.as_deref()),
         req.tool_kind.as_deref(),
-    )?
+    ).await?
     .ok_or(AppError::NotFound("项目不存在".into()))?;
     Ok(Json(json!(project)))
 }
@@ -135,7 +136,7 @@ async fn delete_project(
     Path(project_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let deleted = project_repo::delete(&pool, &project_id, &user.0.id)?;
+    let deleted = project_repo::delete(&pool, &project_id, &user.0.id).await?;
     Ok(Json(json!({ "deleted": deleted })))
 }
 
@@ -144,9 +145,10 @@ async fn get_project_sessions(
     Path(project_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = state::db_pool();
-    let project = project_repo::find_by_id(&pool, &project_id, &user.0.id)?
+    let project = project_repo::find_by_id(&pool, &project_id, &user.0.id)
+        .await?
         .ok_or(AppError::NotFound("项目不存在".into()))?;
-    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 100, None)?
+    let sessions = session_repo::list_by_owner(&pool, &user.0.id, 100, None).await?
         .into_iter()
         .filter(|item| item.project_id.as_deref() == Some(project.id.as_str()))
         .collect::<Vec<_>>();

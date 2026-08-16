@@ -49,7 +49,6 @@ struct FolderQuery {
 
 #[derive(Deserialize)]
 struct StreamQuery {
-    /// 认证 token，用于 <video>/<img> 标签的 src URL 认证
     #[serde(default)]
     token: Option<String>,
 }
@@ -67,9 +66,9 @@ async fn list_files(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = crate::state::db_pool();
     if let Some(folder_id) = q.folder_id.as_deref() {
-        ensure_folder_owner(&pool, &user.0.id, folder_id)?;
+        ensure_folder_owner(&pool, &user.0.id, folder_id).await?;
     }
-    let files = file_repo::list_files(&pool, &user.0.id, q.folder_id.as_deref())?;
+    let files = file_repo::list_files(&pool, &user.0.id, q.folder_id.as_deref()).await?;
     Ok(Json(json!({ "files": files })))
 }
 
@@ -78,13 +77,13 @@ async fn search_files(
     Query(q): Query<FileQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = crate::state::db_pool();
-    let files = file_repo::search_files(&pool, &user.0.id, q.q.as_deref())?;
+    let files = file_repo::search_files(&pool, &user.0.id, q.q.as_deref()).await?;
     Ok(Json(json!({ "files": files })))
 }
 
 async fn file_stats(user: AuthUser) -> Result<Json<serde_json::Value>, AppError> {
     let pool = crate::state::db_pool();
-    let stats = file_repo::stats(&pool, &user.0.id)?;
+    let stats = file_repo::stats(&pool, &user.0.id).await?;
     Ok(Json(json!({
         "by_type": stats.by_type,
         "total_size": stats.total_size,
@@ -103,7 +102,7 @@ async fn upload_file(
     let folder_id = header_value(&headers, "x-folder-id");
     let description = header_value(&headers, "x-description");
     if let Some(folder_id) = folder_id.as_deref() {
-        ensure_folder_owner(&pool, &user.0.id, folder_id)?;
+        ensure_folder_owner(&pool, &user.0.id, folder_id).await?;
     }
 
     while let Some(field) = multipart
@@ -167,7 +166,7 @@ async fn upload_file(
                 "text_chars": extracted.text.chars().count(),
                 "extracted_text": extracted.text,
             })),
-        )?;
+        ).await?;
         return Ok(Json(json!({ "ok": true, "file": file })));
     }
 
@@ -229,14 +228,16 @@ async fn get_file(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = crate::state::db_pool();
-    let file = file_repo::get_file(&pool, &user.0.id, &id)?
+    let file = file_repo::get_file(&pool, &user.0.id, &id)
+        .await?
         .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
     Ok(Json(json!(file)))
 }
 
 async fn download_file(user: AuthUser, Path(id): Path<String>) -> Result<Response, AppError> {
     let pool = crate::state::db_pool();
-    let file = file_repo::get_file(&pool, &user.0.id, &id)?
+    let file = file_repo::get_file(&pool, &user.0.id, &id)
+        .await?
         .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
     let path = PathBuf::from(&file.file_path);
     if !path.exists() {
@@ -245,21 +246,18 @@ async fn download_file(user: AuthUser, Path(id): Path<String>) -> Result<Respons
     export_response(&path, &file.name)
 }
 
-/// 流式播放接口 — 支持 token 查询参数认证，返回 Content-Disposition: inline
-/// 专门用于 <video>/<audio> 标签的 src URL，浏览器可边下载边播放
 async fn stream_file(
     Path(id): Path<String>,
     Query(q): Query<StreamQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    // 优先从查询参数取 token，其次从 Authorization 头取
     let user = if let Some(token) = q.token.as_deref() {
         let claims = crate::auth::verify_token(token).map_err(|_| AppError::Unauthorized)?;
         let pool = crate::state::db_pool();
-        crate::db::user_repo::find_by_id(&pool, &claims.sub)?
+        crate::db::user_repo::find_by_id(&pool, &claims.sub)
+            .await?
             .ok_or(AppError::Unauthorized)?
     } else {
-        // 回退到 Header 认证
         let auth_header = headers
             .get("Authorization")
             .and_then(|v| v.to_str().ok())
@@ -269,12 +267,14 @@ async fn stream_file(
             .ok_or(AppError::Unauthorized)?;
         let claims = crate::auth::verify_token(token).map_err(|_| AppError::Unauthorized)?;
         let pool = crate::state::db_pool();
-        crate::db::user_repo::find_by_id(&pool, &claims.sub)?
+        crate::db::user_repo::find_by_id(&pool, &claims.sub)
+            .await?
             .ok_or(AppError::Unauthorized)?
     };
 
     let pool = crate::state::db_pool();
-    let file = file_repo::get_file(&pool, &user.id, &id)?
+    let file = file_repo::get_file(&pool, &user.id, &id)
+        .await?
         .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
     let path = PathBuf::from(&file.file_path);
     if !path.exists() {
@@ -284,7 +284,6 @@ async fn stream_file(
     let data = tokio::fs::read(&path).await?;
     let mime = mime_guess::from_path(&file.name).first_or_octet_stream();
 
-    // inline 而非 attachment，让浏览器直接播放/展示
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime.as_ref())
@@ -300,7 +299,8 @@ async fn get_file_content(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = crate::state::db_pool();
-    let file = file_repo::get_file(&pool, &user.0.id, &id)?
+    let file = file_repo::get_file(&pool, &user.0.id, &id)
+        .await?
         .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
     if let Some(metadata) = &file.metadata {
         if let Some(text) = metadata
@@ -350,7 +350,7 @@ async fn delete_file(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = crate::state::db_pool();
-    let deleted = file_repo::delete_file(&pool, &user.0.id, &id)?;
+    let deleted = file_repo::delete_file(&pool, &user.0.id, &id).await?;
     if let Some(file) = deleted {
         let _ = tokio::fs::remove_file(&file.file_path).await;
         return Ok(Json(json!({ "deleted": true, "id": id })));
@@ -358,16 +358,15 @@ async fn delete_file(
     Ok(Json(json!({ "deleted": false, "id": id })))
 }
 
-/// 缩略图 — 图片类型返回缩略图字节，其他类型返回 JSON 元信息（前端用图标 + 文件色块代替）
 async fn get_file_thumbnail(
     user: AuthUser,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     let pool = crate::state::db_pool();
-    let file = file_repo::get_file(&pool, &user.0.id, &id)?
+    let file = file_repo::get_file(&pool, &user.0.id, &id)
+        .await?
         .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
 
-    // 图片类型：直接返回图片字节（前端用 CSS 缩放做缩略图）
     if file.file_type == "image" {
         let path = PathBuf::from(&file.file_path);
         if !path.exists() {
@@ -383,7 +382,6 @@ async fn get_file_thumbnail(
             .map_err(|e| AppError::Internal(anyhow::anyhow!(e)));
     }
 
-    // 非图片类型：返回 JSON 元信息，前端用图标渲染缩略图卡片
     let body = json!({
         "file_type": file.file_type,
         "name": file.name,
@@ -396,16 +394,13 @@ async fn get_file_thumbnail(
         .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))
 }
 
-/// 预览 — 返回文件内容供前端渲染
-/// 图片：返回图片字节（inline）
-/// 文本/markdown/drawio：返回文本
-/// xlsx/docx/pptx：返回提取的文本结构
 async fn get_file_preview(
     user: AuthUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = crate::state::db_pool();
-    let file = file_repo::get_file(&pool, &user.0.id, &id)?
+    let file = file_repo::get_file(&pool, &user.0.id, &id)
+        .await?
         .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
 
     let path = PathBuf::from(&file.file_path);
@@ -431,7 +426,6 @@ async fn get_file_preview(
                 .to_string()
         });
 
-    // 视频：返回视频流 URL（前端用 <video> 标签播放）
     if file.file_type == "video" || matches!(extension.as_str(), "mp4" | "webm" | "avi" | "mov" | "mkv" | "flv" | "wmv" | "m4v" | "3gp" | "ogv") {
         return Ok(Json(json!({
             "id": file.id,
@@ -444,7 +438,6 @@ async fn get_file_preview(
         })));
     }
 
-    // 图片：返回 base64 data URL
     if file.file_type == "image" || matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg") {
         let data = tokio::fs::read(&path).await?;
         let b64 = base64_encode(&data);
@@ -459,7 +452,6 @@ async fn get_file_preview(
         })));
     }
 
-    // drawio / xml：返回 XML 文本
     if extension == "drawio" || extension == "xml" {
         let text = tokio::fs::read_to_string(&path).await?;
         return Ok(Json(json!({
@@ -472,7 +464,6 @@ async fn get_file_preview(
         })));
     }
 
-    // markdown / txt：返回文本
     if matches!(extension.as_str(), "md" | "markdown" | "txt") {
         let text = tokio::fs::read_to_string(&path).await?;
         return Ok(Json(json!({
@@ -485,7 +476,6 @@ async fn get_file_preview(
         })));
     }
 
-    // xlsx / docx / pptx / csv：返回结构化预览数据
     let data = tokio::fs::read(&path).await?;
     let structured = file_extract::extract_structured(&file.name, &mime_type, &data);
     let preview_type = match extension.as_str() {
@@ -496,7 +486,6 @@ async fn get_file_preview(
         _ => "text",
     };
 
-    // 对于结构化类型（presentation/spreadsheet/document），返回结构化 JSON
     if structured.preview_type == "presentation"
         || structured.preview_type == "spreadsheet"
         || structured.preview_type == "document"
@@ -513,7 +502,6 @@ async fn get_file_preview(
         })));
     }
 
-    // 其他类型回退到文本
     Ok(Json(json!({
         "id": file.id,
         "name": file.name,
@@ -532,9 +520,9 @@ async fn list_folders(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = crate::state::db_pool();
     if let Some(parent_id) = q.parent_id.as_deref() {
-        ensure_folder_owner(&pool, &user.0.id, parent_id)?;
+        ensure_folder_owner(&pool, &user.0.id, parent_id).await?;
     }
-    let folders = file_repo::list_folders(&pool, &user.0.id, q.parent_id.as_deref())?;
+    let folders = file_repo::list_folders(&pool, &user.0.id, q.parent_id.as_deref()).await?;
     Ok(Json(json!({ "folders": folders })))
 }
 
@@ -545,9 +533,9 @@ async fn create_folder(
     let name = sanitize_folder_name(&payload.name)?;
     let pool = crate::state::db_pool();
     if let Some(parent_id) = payload.parent_id.as_deref() {
-        ensure_folder_owner(&pool, &user.0.id, parent_id)?;
+        ensure_folder_owner(&pool, &user.0.id, parent_id).await?;
     }
-    let folder = file_repo::create_folder(&pool, &user.0.id, &name, payload.parent_id.as_deref())?;
+    let folder = file_repo::create_folder(&pool, &user.0.id, &name, payload.parent_id.as_deref()).await?;
     Ok(Json(json!({ "ok": true, "folder": folder })))
 }
 
@@ -556,20 +544,21 @@ async fn delete_folder(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let pool = crate::state::db_pool();
-    let existed = file_repo::get_folder(&pool, &user.0.id, &id)?.is_some();
-    let removed_files = file_repo::delete_folder_tree(&pool, &user.0.id, &id)?;
+    let existed = file_repo::get_folder(&pool, &user.0.id, &id).await?.is_some();
+    let removed_files = file_repo::delete_folder_tree(&pool, &user.0.id, &id).await?;
     for file in removed_files {
         let _ = tokio::fs::remove_file(&file.file_path).await;
     }
     Ok(Json(json!({ "deleted": existed, "id": id })))
 }
 
-fn ensure_folder_owner(
+async fn ensure_folder_owner(
     pool: &crate::db::DbPool,
     owner_id: &str,
     folder_id: &str,
 ) -> Result<(), AppError> {
-    file_repo::get_folder(pool, owner_id, folder_id)?
+    file_repo::get_folder(pool, owner_id, folder_id)
+        .await?
         .ok_or_else(|| AppError::NotFound("文件夹不存在".into()))?;
     Ok(())
 }

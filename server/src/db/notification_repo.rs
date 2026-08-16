@@ -1,7 +1,7 @@
 use super::DbPool;
 use crate::error::AppResult;
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationRow {
@@ -16,71 +16,76 @@ pub struct NotificationRow {
     pub created_at: String,
 }
 
-pub fn list(
+pub async fn list(
     pool: &DbPool,
     user_id: &str,
     unread_only: bool,
     limit: i64,
 ) -> AppResult<Vec<NotificationRow>> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     let sql = if unread_only {
-        "SELECT id, user_id, type, title, content, is_read, link, created_at FROM notifications WHERE user_id = ?1 AND is_read = 0 ORDER BY created_at DESC LIMIT ?2"
+        "SELECT id, user_id, type, title, content, is_read, link, created_at FROM notifications WHERE user_id = ? AND is_read = 0 ORDER BY created_at DESC LIMIT ?"
     } else {
-        "SELECT id, user_id, type, title, content, is_read, link, created_at FROM notifications WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2"
+        "SELECT id, user_id, type, title, content, is_read, link, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?"
     };
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params![user_id, limit], |row| {
-        Ok(NotificationRow {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            notif_type: row.get(2)?,
-            title: row.get(3)?,
-            content: row.get(4)?,
-            is_read: row.get::<_, i64>(5)? != 0,
-            link: row.get(6)?,
-            created_at: row.get(7)?,
-        })
-    })?;
+    let rows = sqlx::query(sql)
+        .bind(user_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
     let mut result = Vec::new();
     for row in rows {
-        result.push(row?);
+        let is_read_val: i64 = row.try_get(5)?;
+        result.push(NotificationRow {
+            id: row.try_get(0)?,
+            user_id: row.try_get(1)?,
+            notif_type: row.try_get(2)?,
+            title: row.try_get(3)?,
+            content: row.try_get(4)?,
+            is_read: is_read_val != 0,
+            link: row.try_get(6)?,
+            created_at: row.try_get(7)?,
+        });
     }
     Ok(result)
 }
 
-pub fn unread_count(pool: &DbPool, user_id: &str) -> AppResult<i64> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM notifications WHERE user_id = ?1 AND is_read = 0",
-        params![user_id],
-        |r| r.get(0),
-    )?;
+pub async fn unread_count(pool: &DbPool, user_id: &str) -> AppResult<i64> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0"
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
     Ok(count)
 }
 
-pub fn mark_as_read(pool: &DbPool, id: &str, user_id: &str) -> AppResult<bool> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let affected = conn.execute(
-        "UPDATE notifications SET is_read = 1 WHERE id = ?1 AND user_id = ?2",
-        params![id, user_id],
-    )?;
-    Ok(affected > 0)
+pub async fn mark_as_read(pool: &DbPool, id: &str, user_id: &str) -> AppResult<bool> {
+    let result = sqlx::query(
+        "UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?"
+    )
+    .bind(id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
-pub fn mark_all_as_read(pool: &DbPool, user_id: &str) -> AppResult<()> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    conn.execute(
-        "UPDATE notifications SET is_read = 1 WHERE user_id = ?1",
-        params![user_id],
-    )?;
+pub async fn mark_all_as_read(pool: &DbPool, user_id: &str) -> AppResult<()> {
+    sqlx::query("UPDATE notifications SET is_read = 1 WHERE user_id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
-pub fn delete(pool: &DbPool, id: &str, user_id: &str) -> AppResult<bool> {
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    let affected = conn.execute(
-        "DELETE FROM notifications WHERE id = ?1 AND user_id = ?2",
-        params![id, user_id],
-    )?;
-    Ok(affected > 0)
+pub async fn delete(pool: &DbPool, id: &str, user_id: &str) -> AppResult<bool> {
+    let result = sqlx::query(
+        "DELETE FROM notifications WHERE id = ? AND user_id = ?"
+    )
+    .bind(id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }

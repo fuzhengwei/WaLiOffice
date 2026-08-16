@@ -427,7 +427,7 @@ async fn save_file_bytes(
         None,
         Some(description),
         Some(metadata),
-    )?;
+    ).await?;
     Ok(())
 }
 
@@ -876,11 +876,11 @@ async fn chat_stream(
     let client = std::sync::Arc::new(crate::llm::LlmClient::for_user(
         &user.0.id,
         req.model.as_deref(),
-    ));
+    ).await);
 
     // 创建或获取会话
     let session = if let Some(ref sid) = req.session_id {
-        session_repo::find_by_id(&pool, sid)?.ok_or(AppError::NotFound("会话不存在".into()))?
+        session_repo::find_by_id(&pool, sid).await?.ok_or(AppError::NotFound("会话不存在".into()))?
     } else {
         let title_source = if req.message.trim().is_empty() {
             req.attachments
@@ -898,14 +898,14 @@ async fn chat_stream(
             req.project_id.as_deref(),
             resolved_tool_kind.as_deref(),
             &title,
-        )?
+        ).await?
     };
 
     let session_id = session.id.clone();
 
     // 加载历史消息
-    let history = session_repo::get_messages(&pool, &session_id, 50).unwrap_or_default();
-    let existing_artifacts = session_repo::get_artifacts(&pool, &session_id).unwrap_or_default();
+    let history = session_repo::get_messages(&pool, &session_id, 50).await.unwrap_or_default();
+    let existing_artifacts = session_repo::get_artifacts(&pool, &session_id).await.unwrap_or_default();
 
     if let Some(attachments) = req.attachments.as_deref() {
         save_chat_attachments_to_files(&pool, &user.0.id, attachments).await;
@@ -918,7 +918,7 @@ async fn chat_stream(
         tool_calls: None,
         tool_call_id: None,
     };
-    let _ = session_repo::add_message(&pool, &session_id, &user_msg);
+    let _ = session_repo::add_message(&pool, &session_id, &user_msg).await;
 
     // 创建 SSE channel
     let (sse_tx, sse_rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(256);
@@ -1048,7 +1048,7 @@ async fn chat_stream(
                         &pool_for_save,
                         &session_id_for_save,
                         &session_artifacts,
-                    );
+                    ).await;
                     Event::default().event("artifact_update").data(serde_json::json!({
                         "artifact": artifact,
                         "artifacts": session_artifacts,
@@ -1100,12 +1100,12 @@ async fn chat_stream(
                         &pool_for_save,
                         &session_id_for_save,
                         &summary.chars().take(240).collect::<String>(),
-                    );
+                    ).await;
                     let _ = session_repo::save_artifacts(
                         &pool_for_save,
                         &session_id_for_save,
                         &session_artifacts,
-                    );
+                    ).await;
                     Event::default().event("done").data(serde_json::json!({
                         "session_id": session_id_for_save,
                         "summary": summary,
@@ -1130,7 +1130,7 @@ async fn chat_stream(
                     tool_call_id: None,
                 };
                 let _ =
-                    session_repo::add_message(&pool_for_save, &session_id_for_save, &assistant_msg);
+                    session_repo::add_message(&pool_for_save, &session_id_for_save, &assistant_msg).await;
             }
         }
     });

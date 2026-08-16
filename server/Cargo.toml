@@ -25,9 +25,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 eventsource-stream = "0.2"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
-r2d2 = "0.8"
-r2d2_sqlite = "0.25"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "mysql", "any", "chrono", "uuid", "json"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

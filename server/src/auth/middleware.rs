@@ -5,7 +5,7 @@ use crate::error::AppError;
 use crate::models::User;
 
 /// 从请求头解析当前用户
-pub fn extract_user(parts: &Parts) -> Result<User, AppError> {
+pub async fn extract_user(parts: &Parts) -> Result<User, AppError> {
     let auth_header = parts
         .headers
         .get("Authorization")
@@ -20,7 +20,7 @@ pub fn extract_user(parts: &Parts) -> Result<User, AppError> {
 
     let pool = crate::state::db_pool();
     let user =
-        crate::db::user_repo::find_by_id(&pool, &claims.sub)?.ok_or(AppError::Unauthorized)?;
+        crate::db::user_repo::find_by_id(&pool, &claims.sub).await?.ok_or(AppError::Unauthorized)?;
 
     Ok(user)
 }
@@ -37,7 +37,7 @@ where
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let user = extract_user(parts)?;
+        let user = extract_user(parts).await?;
         Ok(AuthUser(user))
     }
 }
