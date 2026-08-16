@@ -1,5 +1,5 @@
 # ── Stage 1: 构建前端 ──
-FROM docker.1ms.run/node:20-slim AS frontend
+FROM node:20-slim AS frontend
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm config set registry https://registry.npmmirror.com && npm ci
@@ -7,7 +7,7 @@ COPY frontend/ .
 RUN npm run build
 
 # ── Stage 2: 构建后端 ──
-FROM docker.1ms.run/rust:1.85-bookworm AS server
+FROM rust:1.88-bookworm AS server
 WORKDIR /srv
 # 使用国内 crates.io 镜像加速
 RUN mkdir -p /usr/local/cargo && \
@@ -28,13 +28,13 @@ RUN touch src/main.rs && cargo build --release
 # ── Stage 3: 运行时 ──
 # 不换 apt 源，不改 sources.list，避免国内镜像源超时
 # ffmpeg 用静态二进制，不走 apt
-FROM docker.1ms.run/ubuntu:22.04
+FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 # 只装 ca-certificates 和 libssl3（小包，默认源即使慢也能装上）
 # 如果默认源也超时，加 --fix-missing 重试
 RUN apt-get update && \
     apt-get install -y --no-install-recommends --fix-missing \
-    ca-certificates libssl3 && \
+    ca-certificates libssl3 curl && \
     rm -rf /var/lib/apt/lists/*
 # 下载 ffmpeg 静态二进制（不走 apt，避免大量依赖包）
 RUN ARCH=$(dpkg --print-architecture) && \
