@@ -1,4 +1,4 @@
-import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Image, LayoutDashboard, LogOut, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Sheet, Sparkles, Trash2 } from 'lucide-react'
+import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Github, Image, LayoutDashboard, LogOut, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Sheet, Sparkles, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, DragEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -170,6 +170,7 @@ export function ConversationSidebar({
   const workspaceLinks = [
     { to: '/', label: '智能助手', icon: Sparkles, active: location.pathname === '/' },
     { to: '/files', label: '我的文件', icon: Folder, active: location.pathname.startsWith('/files') },
+    { to: 'https://github.com/fuzhengwei/WaLiOffice', label: '开源项目', icon: Github, active: false, external: true },
   ]
 
   const toggleProject = (id: string) => {
@@ -483,16 +484,31 @@ export function ConversationSidebar({
         <div className="mb-2 grid grid-cols-3 gap-1.5 rounded-2xl bg-white/42 p-1 shadow-sm backdrop-blur">
           {workspaceLinks.map((item) => {
             const Icon = item.icon
+            if (item.external) {
+              return (
+                <a
+                  key={item.to}
+                  href={item.to}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex min-w-0 flex-col items-center gap-1 rounded-xl px-2 py-2 text-[10px] font-bold text-surface-500 transition-all hover:bg-white/80 hover:text-surface-950"
+                  title={item.label}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span className="truncate">{item.label}</span>
+                </a>
+              )
+            }
             return (
               <button
                 key={item.to}
                 type="button"
                 onClick={() => navigate(item.to)}
                 className={`flex min-w-0 flex-col items-center gap-1 rounded-xl px-2 py-2 text-[10px] font-bold transition-all ${
-                  item.active
-                    ? 'bg-surface-950 text-white shadow-sm'
-                    : 'text-surface-500 hover:bg-white/80 hover:text-surface-950'
-                }`}
+                    item.active
+                      ? 'bg-surface-950 text-white shadow-sm'
+                      : 'text-surface-500 hover:bg-white/80 hover:text-surface-950'
+                  }`}
                 title={item.label}
               >
                 <Icon className="h-4 w-4" />
