@@ -40,12 +40,12 @@ RUN apt-get update && \
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then FFMPEG_ARCH="amd64"; \
     else FFMPEG_ARCH="arm64"; fi && \
-    curl -fsSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${FFMPEG_ARCH}-static.tar.xz" \
+    curl -fsSL --retry 3 "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${FFMPEG_ARCH}-static.tar.xz" \
     -o /tmp/ffmpeg.tar.xz && \
     mkdir -p /tmp/ffmpeg && \
-    tar xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1 && \
-    mv /tmp/ffmpeg/ffmpeg /usr/local/bin/ffmpeg && \
-    mv /tmp/ffmpeg/ffprobe /usr/local/bin/ffprobe && \
+    tar xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg && \
+    cp /tmp/ffmpeg/*/ffmpeg /usr/local/bin/ffmpeg && \
+    cp /tmp/ffmpeg/*/ffprobe /usr/local/bin/ffprobe && \
     chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe && \
     rm -rf /tmp/ffmpeg*
 WORKDIR /app
