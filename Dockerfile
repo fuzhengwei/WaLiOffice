@@ -34,20 +34,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # 如果默认源也超时，加 --fix-missing 重试
 RUN apt-get update && \
     apt-get install -y --no-install-recommends --fix-missing \
-    ca-certificates libssl3 curl xz-utils && \
+    ca-certificates libssl3 curl xz-utils ffmpeg && \
     rm -rf /var/lib/apt/lists/*
-# 下载 ffmpeg 静态二进制（不走 apt，避免大量依赖包）
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "amd64" ]; then FFMPEG_ARCH="amd64"; \
-    else FFMPEG_ARCH="arm64"; fi && \
-    curl -fsSL --retry 3 "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${FFMPEG_ARCH}-static.tar.xz" \
-    -o /tmp/ffmpeg.tar.xz && \
-    mkdir -p /tmp/ffmpeg && \
-    tar xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg && \
-    cp /tmp/ffmpeg/*/ffmpeg /usr/local/bin/ffmpeg && \
-    cp /tmp/ffmpeg/*/ffprobe /usr/local/bin/ffprobe && \
-    chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe && \
-    rm -rf /tmp/ffmpeg*
 WORKDIR /app
 COPY --from=server /srv/target/release/walioffice /usr/local/bin/walioffice
 
