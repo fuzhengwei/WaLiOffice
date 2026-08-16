@@ -133,6 +133,8 @@ pub struct ChatRequest {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<ChatAttachment>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_config: Option<serde_json::Value>,
 }
 
 // ── Slide / PPT ──

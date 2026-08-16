@@ -24,6 +24,7 @@ pub fn router() -> Router {
         .route("/api/files/:id/content", get(get_file_content))
         .route("/api/files/:id/thumbnail", get(get_file_thumbnail))
         .route("/api/files/:id/preview", get(get_file_preview))
+        .route("/api/files/:id/stream", get(stream_file))
         .route("/api/files/:id", get(get_file).delete(delete_file))
         .route("/api/files/:id/download", get(download_file))
         .route("/api/files/folders/list", get(list_folders))
@@ -44,6 +45,13 @@ struct FileQuery {
 struct FolderQuery {
     #[serde(default)]
     parent_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct StreamQuery {
+    /// 认证 token，用于 <video>/<img> 标签的 src URL 认证
+    #[serde(default)]
+    token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -237,6 +245,56 @@ async fn download_file(user: AuthUser, Path(id): Path<String>) -> Result<Respons
     export_response(&path, &file.name)
 }
 
+/// 流式播放接口 — 支持 token 查询参数认证，返回 Content-Disposition: inline
+/// 专门用于 <video>/<audio> 标签的 src URL，浏览器可边下载边播放
+async fn stream_file(
+    Path(id): Path<String>,
+    Query(q): Query<StreamQuery>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    // 优先从查询参数取 token，其次从 Authorization 头取
+    let user = if let Some(token) = q.token.as_deref() {
+        let claims = crate::auth::verify_token(token).map_err(|_| AppError::Unauthorized)?;
+        let pool = crate::state::db_pool();
+        crate::db::user_repo::find_by_id(&pool, &claims.sub)?
+            .ok_or(AppError::Unauthorized)?
+    } else {
+        // 回退到 Header 认证
+        let auth_header = headers
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .ok_or(AppError::Unauthorized)?;
+        let token = auth_header
+            .strip_prefix("Bearer ")
+            .ok_or(AppError::Unauthorized)?;
+        let claims = crate::auth::verify_token(token).map_err(|_| AppError::Unauthorized)?;
+        let pool = crate::state::db_pool();
+        crate::db::user_repo::find_by_id(&pool, &claims.sub)?
+            .ok_or(AppError::Unauthorized)?
+    };
+
+    let pool = crate::state::db_pool();
+    let file = file_repo::get_file(&pool, &user.id, &id)?
+        .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
+    let path = PathBuf::from(&file.file_path);
+    if !path.exists() {
+        return Err(AppError::NotFound("文件实体不存在".into()));
+    }
+
+    let data = tokio::fs::read(&path).await?;
+    let mime = mime_guess::from_path(&file.name).first_or_octet_stream();
+
+    // inline 而非 attachment，让浏览器直接播放/展示
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime.as_ref())
+        .header(header::CONTENT_DISPOSITION, format!("inline; filename=\"{}\"", file.name))
+        .header(header::CACHE_CONTROL, "private, max-age=3600")
+        .header(header::ACCEPT_RANGES, "bytes")
+        .body(Body::from(data))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))
+}
+
 async fn get_file_content(
     user: AuthUser,
     Path(id): Path<String>,
@@ -372,6 +430,19 @@ async fn get_file_preview(
                 .first_or_octet_stream()
                 .to_string()
         });
+
+    // 视频：返回视频流 URL（前端用 <video> 标签播放）
+    if file.file_type == "video" || matches!(extension.as_str(), "mp4" | "webm" | "avi" | "mov" | "mkv" | "flv" | "wmv" | "m4v" | "3gp" | "ogv") {
+        return Ok(Json(json!({
+            "id": file.id,
+            "name": file.name,
+            "file_type": file.file_type,
+            "preview_type": "video",
+            "mime_type": mime_type,
+            "video_url": format!("/api/files/{}/stream", file.id),
+            "file_size": file.file_size,
+        })));
+    }
 
     // 图片：返回 base64 data URL
     if file.file_type == "image" || matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg") {
@@ -575,7 +646,9 @@ fn infer_file_type(name: &str, mime_type: &str) -> String {
         "xls" | "xlsx" | "csv" | "tsv" => "excel".into(),
         "drawio" | "xml" => "drawio".into(),
         "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg" => "image".into(),
+        "mp4" | "webm" | "avi" | "mov" | "mkv" | "flv" | "wmv" | "m4v" | "3gp" | "ogv" => "video".into(),
         _ if mime_type.starts_with("image/") => "image".into(),
+        _ if mime_type.starts_with("video/") => "video".into(),
         _ if mime_type.contains("spreadsheet") || mime_type.contains("excel") => "excel".into(),
         _ if mime_type.contains("presentation") => "ppt".into(),
         _ if mime_type.contains("pdf")

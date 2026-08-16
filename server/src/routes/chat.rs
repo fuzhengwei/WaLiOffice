@@ -9,7 +9,7 @@ use std::path::{Path as FsPath, PathBuf};
 use std::time::Duration;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::agent::{run_agent_loop, AgentConfig, AgentEvent};
+use crate::agent::{run_agent_loop, AgentConfig, AgentEvent, IntentAnalyzer};
 use crate::auth::middleware::AuthUser;
 use crate::db::{file_repo, project_repo, session_repo, DbPool};
 use crate::error::AppError;
@@ -179,6 +179,13 @@ fn allowed_tools_for_kind(tool_kind: Option<&str>) -> Option<Vec<String>> {
     }
 }
 
+/// 全局意图分析器（按会话隔离上下文）
+static INTENT_ANALYZER: std::sync::OnceLock<std::sync::Mutex<IntentAnalyzer>> = std::sync::OnceLock::new();
+
+fn intent_analyzer() -> &'static std::sync::Mutex<IntentAnalyzer> {
+    INTENT_ANALYZER.get_or_init(|| std::sync::Mutex::new(IntentAnalyzer::new()))
+}
+
 fn contains_any(text: &str, keywords: &[&str]) -> bool {
     keywords.iter().any(|keyword| text.contains(keyword))
 }
@@ -201,6 +208,38 @@ fn infer_media_tool_kind(req: &ChatRequest) -> Option<String> {
     }
 
     let text = req.message.trim().to_lowercase();
+
+    // 文本优先意图排除：当用户明确要求"先写/构思/规划/出方案"时，
+    // 当前意图是文本/文档生成，不应直接跳到媒体工具
+    let text_first_patterns = [
+        "先帮我写",
+        "帮我写",
+        "先写",
+        "帮我构思",
+        "帮我规划",
+        "先出",
+        "帮我出",
+        "写提示词",
+        "出提示词",
+        "写prompt",
+        "写脚本",
+        "先规划",
+        "先想",
+        "帮我想想",
+        "帮我设计",
+        "先做个方案",
+        "出个方案",
+        "写个方案",
+        "帮我写个",
+        "先构思",
+    ];
+    let has_text_first_intent = text_first_patterns
+        .iter()
+        .any(|p| text.contains(p));
+    if has_text_first_intent {
+        return None; // 交给 LLM 自由选择工具
+    }
+
     if contains_any(
         &text,
         &[
@@ -805,7 +844,35 @@ async fn chat_stream(
     Json(req): Json<ChatRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let pool = state::db_pool();
-    let resolved_tool_kind = infer_media_tool_kind(&req).or_else(|| req.tool_kind.clone());
+
+    // ── 意图识别 ────────────────────────────────────────────────────────
+    let has_image = has_image_attachment(&req);
+    let intent_result = {
+        let mut analyzer = intent_analyzer().lock().unwrap();
+        analyzer.analyze(&req.message, &req.session_id.clone().unwrap_or_default(), has_image)
+    };
+    tracing::info!(
+        "[Intent] session={} intent={:?} confidence={:.2} source={:?} temporal={:?}",
+        req.session_id.as_deref().unwrap_or("-"),
+        intent_result.intent,
+        intent_result.confidence,
+        intent_result.source,
+        intent_result.temporal_order,
+    );
+
+    // 优先用意图识别结果，前端 tool_kind 作为 fallback
+    let resolved_tool_kind = if intent_result.confidence >= 0.5 {
+        // 意图识别置信度足够时，用意图结果决定 allowed_tools
+        match intent_result.intent {
+            crate::agent::intent::IntentType::Image => Some("image".to_string()),
+            crate::agent::intent::IntentType::Video => Some("video".to_string()),
+            _ => req.tool_kind.clone(), // 其他意图交给前端 tool_kind 或 None
+        }
+    } else {
+        // 低置信度时 fallback 到旧逻辑
+        infer_media_tool_kind(&req).or_else(|| req.tool_kind.clone())
+    };
+
     let client = std::sync::Arc::new(crate::llm::LlmClient::for_user(
         &user.0.id,
         req.model.as_deref(),
@@ -860,10 +927,32 @@ async fn chat_stream(
     let user_id = user.0.id.clone();
     let project_id = req.project_id.clone();
     let user_message = build_user_message(&req);
+
+    // 构建意图上下文注入
+    let intent_addition = {
+        let analyzer = intent_analyzer().lock().unwrap();
+        analyzer.build_intent_context_addition(&intent_result)
+    };
+    let system_prompt = if intent_addition.is_empty() {
+        String::new() // 使用默认 OFFICE_AGENT_PROMPT
+    } else {
+        intent_addition // 仅注入意图补充，agent_loop 会拼接到 OFFICE_AGENT_PROMPT 后面
+    };
+
+    // 用意图识别结果决定 allowed_tools
+    let allowed_tools = if intent_result.confidence >= 0.5 {
+        {
+            let analyzer = intent_analyzer().lock().unwrap();
+            analyzer.allowed_tools_for_intent(&intent_result)
+        }
+    } else {
+        allowed_tools_for_kind(resolved_tool_kind.as_deref())
+    };
+
     let agent_config = AgentConfig {
         max_turns: 6,
-        system_prompt: String::new(), // 使用默认 OFFICE_AGENT_PROMPT
-        allowed_tools: allowed_tools_for_kind(resolved_tool_kind.as_deref()),
+        system_prompt,
+        allowed_tools,
     };
 
     // 创建 tool context 的 emit 回调
@@ -879,7 +968,7 @@ async fn chat_stream(
         req.model.clone(),
         req.attachments.clone().unwrap_or_default(),
         emit,
-    );
+    ).with_tool_config(req.tool_config.clone().unwrap_or(serde_json::json!({})));
 
     let session_id_for_save = session_id.clone();
     let pool_for_save = pool.clone();

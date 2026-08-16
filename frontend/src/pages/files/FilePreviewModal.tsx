@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { X, Download, ChevronLeft, ChevronRight, FileText, FileSpreadsheet, FileType, FileCode, File as FileIcon, ChevronDown } from 'lucide-react'
+import { X, Download, ChevronLeft, ChevronRight, FileText, FileSpreadsheet, FileType, FileCode, File as FileIcon, ChevronDown, Play } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { fileApi } from '@/api'
+import { useAuthStore } from '@/stores/auth-store'
 import type { FileItem } from '@/types'
 
 interface FilePreviewModalProps {
@@ -18,6 +19,7 @@ interface PreviewData {
   text?: string
   structured?: any
   data_url?: string
+  video_url?: string
   mime_type?: string
   name: string
   file_type: string
@@ -279,6 +281,44 @@ function DocStructuredPreview({ data }: { data: any }) {
   )
 }
 
+// ===== 视频预览 =====
+function VideoPreview({ videoUrl, name }: { videoUrl: string; name: string }) {
+  const [error, setError] = useState('')
+  const token = useAuthStore.getState().token
+
+  // 构建带认证的流式播放 URL：通过查询参数传递 token，让 <video> 标签可以直接流式播放
+  // 这样浏览器可以边下载边播放，无需等待整个文件下载完成
+  const streamUrl = token
+    ? `${videoUrl}${videoUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+    : videoUrl
+
+  const handleVideoError = () => {
+    setError('视频加载失败，请尝试下载后查看')
+  }
+
+  if (error) return (
+    <div className="flex flex-col items-center justify-center py-20 text-center">
+      <Play className="h-12 w-12 text-surface-300 mb-3" />
+      <p className="text-sm text-surface-300">{error}</p>
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col items-center w-full max-w-5xl mx-auto">
+      <video
+        src={streamUrl}
+        controls
+        autoPlay
+        className="max-h-[78vh] max-w-full rounded-xl shadow-2xl"
+        style={{ backgroundColor: '#000' }}
+        onError={handleVideoError}
+      >
+        您的浏览器不支持视频播放，请下载后查看。
+      </video>
+    </div>
+  )
+}
+
 export function FilePreviewModal({ file, onClose, onPrev, onNext, onDownload }: FilePreviewModalProps) {
   const [preview, setPreview] = useState<PreviewData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -332,6 +372,11 @@ export function FilePreviewModal({ file, onClose, onPrev, onNext, onDownload }: 
     if (!preview) return null
 
     const pt = preview.preview_type
+
+    // 视频预览
+    if (pt === 'video' && preview.video_url) {
+      return <VideoPreview videoUrl={preview.video_url} name={preview.name} />
+    }
 
     // 图片预览
     if (pt === 'image' && preview.data_url) {

@@ -18,6 +18,8 @@ pub struct ToolContext {
     pub emit: Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>,
     /// 共享上下文（跨工具传递，如 PPT 大纲规划）
     pub scratchpad: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    /// 用户工具配置（前端传入，如视频时长、宽高比等）
+    pub tool_config: Option<serde_json::Value>,
 }
 
 impl ToolContext {
@@ -37,7 +39,21 @@ impl ToolContext {
             attachments,
             emit: Arc::new(emit),
             scratchpad: Arc::new(Mutex::new(HashMap::new())),
+            tool_config: None,
         }
+    }
+
+    pub fn with_tool_config(mut self, config: serde_json::Value) -> Self {
+        self.tool_config = Some(config);
+        self
+    }
+
+    /// 获取工具配置中的某个字段值
+    pub fn get_config<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.tool_config
+            .as_ref()
+            .and_then(|cfg| cfg.get(key))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
     pub fn send(&self, event: &str, data: serde_json::Value) {

@@ -264,15 +264,17 @@ impl OfficeTool for VideoGenerateTool {
             return ToolResult::err("topic 不能为空");
         }
 
+        let config_aspect_ratio = ctx.get_config::<String>("aspect_ratio");
         let requested_aspect_ratio = normalize_aspect_ratio(
-            input
-                .get("aspect_ratio")
-                .and_then(|v| v.as_str())
+            config_aspect_ratio
+                .as_deref()
+                .or_else(|| input.get("aspect_ratio").and_then(|v| v.as_str()))
                 .unwrap_or("16:9"),
         );
-        let requested_duration = input
-            .get("duration")
-            .and_then(|v| v.as_str())
+        let config_duration = ctx.get_config::<String>("duration");
+        let requested_duration = config_duration
+            .as_deref()
+            .or_else(|| input.get("duration").and_then(|v| v.as_str()))
             .unwrap_or("standard")
             .trim();
         let duration = if requested_duration.eq_ignore_ascii_case("short") {
@@ -285,10 +287,17 @@ impl OfficeTool for VideoGenerateTool {
             "standard"
         };
         let image_inputs = collect_video_images(ctx, &input);
+        let config_mode = ctx.get_config::<String>("mode");
         let generation_mode = normalize_mode(
-            input.get("mode").and_then(|v| v.as_str()).unwrap_or(""),
+            config_mode
+                .as_deref()
+                .or_else(|| input.get("mode").and_then(|v| v.as_str()))
+                .unwrap_or(""),
             image_inputs.len(),
         );
+
+        tracing::info!("[VideoConfig] tool_config={:?}, requested_aspect_ratio={}, requested_duration={}, duration={}, generation_mode={}",
+            ctx.tool_config, requested_aspect_ratio, requested_duration, duration, generation_mode);
 
         ctx.send(
             "state_update",

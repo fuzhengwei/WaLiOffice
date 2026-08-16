@@ -1,11 +1,12 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Palette, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X, Clapperboard } from 'lucide-react'
+import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X, Clapperboard } from 'lucide-react'
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
-import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, LLMProfile, PPTProject, ToolKind } from '@/types'
+import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, LLMProfile, PPTProject, ToolKind, ToolConfigMap } from '@/types'
 import { findArtifactTurnGroup, groupArtifactsByTurn } from '@/lib/artifact-turns'
+import { ToolConfigDropdown } from './ToolConfigDropdown'
 
 interface ChatPanelProps {
   messages: ChatMessage[]
@@ -23,6 +24,7 @@ interface ChatPanelProps {
   selectedModel: string
   artifacts: Artifact[]
   activeArtifactId: string | null
+  toolConfig: ToolConfigMap
   onProjectChange: (projectId: string | null) => void
   onNewProject?: () => void
   onModelChange: (model: string) => void
@@ -31,6 +33,7 @@ interface ChatPanelProps {
   onInputChange: (v: string) => void
   onSend: () => void
   onStop: () => void
+  onToolConfigChange: (config: ToolConfigMap) => void
   attachments: ChatAttachment[]
   onPickAttachments: () => void
   onRemoveAttachment: (id: string) => void
@@ -245,6 +248,7 @@ export function ChatPanel({
   selectedModel,
   artifacts,
   activeArtifactId,
+  toolConfig,
   onProjectChange,
   onNewProject,
   onModelChange,
@@ -253,6 +257,7 @@ export function ChatPanel({
   onInputChange,
   onSend,
   onStop,
+  onToolConfigChange,
   attachments,
   onPickAttachments,
   onRemoveAttachment,
@@ -263,6 +268,8 @@ export function ChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const tool = getAgentTool(activeTool)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const [showArtifactPanel, setShowArtifactPanel] = useState(false)
+  const sessionId = null
   const [processPanelExpanded, setProcessPanelExpanded] = useState(true)
   const [artifactSummaryExpanded, setArtifactSummaryExpanded] = useState(false)
   const previousArtifactsLengthRef = useRef(artifacts.length)
@@ -351,40 +358,6 @@ export function ChatPanel({
     }
   }
 
-  const themes = [
-    {
-      id: 'default',
-      name: '默认',
-      description: '柔和中性',
-      swatchClass: 'from-slate-100 via-white to-stone-200',
-    },
-    {
-      id: 'business',
-      name: '商务',
-      description: '稳重专业',
-      swatchClass: 'from-slate-700 via-slate-500 to-slate-200',
-    },
-    {
-      id: 'tech',
-      name: '科技',
-      description: '冷调未来',
-      swatchClass: 'from-cyan-400 via-sky-500 to-indigo-600',
-    },
-    {
-      id: 'warm',
-      name: '暖橙',
-      description: '温暖亲和',
-      swatchClass: 'from-amber-300 via-orange-400 to-rose-400',
-    },
-    {
-      id: 'minimal',
-      name: '极简',
-      description: '黑白克制',
-      swatchClass: 'from-zinc-900 via-zinc-500 to-zinc-100',
-    },
-  ]
-  const activeTheme = themes.find((theme) => theme.id === selectedTheme) || themes[0]
-
   // 解析日志
   const parsedLogs: ParsedLog[] = processLogs.map((log, idx) => parseLogEntry(log, idx))
   // 最后一条如果是 running 状态且正在流式，保持 running；否则标记 done
@@ -427,48 +400,48 @@ export function ChatPanel({
   const starterCards: Array<{ title: string; desc: string; prompt: string; tool: ToolKind; icon: typeof Bot; accent: string }> = [
     {
       title: '生成 PPT',
-      desc: '从主题到大纲与页面',
-      prompt: '帮我做一份 8 页左右的产品发布会 PPT，风格专业简洁，包含背景、亮点、方案、计划和总结。',
+      desc: '年度总结汇报演示',
+      prompt: '帮我做一份 2025 年度团队总结汇报 PPT，共 8 页，包含：年度业绩回顾、重点项目里程碑、团队成长故事、遇到的挑战与应对、明年展望，风格商务大气，配数据图表。',
       tool: 'ppt',
       icon: LayoutDashboard,
       accent: 'from-blue-500 to-indigo-500',
     },
     {
       title: '分析 Excel',
-      desc: '整理数据、洞察和图表',
-      prompt: '我会上传一份 Excel，请帮我分析关键指标、异常数据，并生成一份可汇报的结论摘要。',
+      desc: '学区房价格与升学率排序',
+      prompt: '请帮我检索天津和平区学区房价格和重点小学升学率数据，按学校排名整理成表格，包含学校名称、学区房均价、初中升学率、重点高中录取率等指标，并生成一份可汇报的 Excel 文档。',
       tool: 'excel',
       icon: Sheet,
       accent: 'from-amber-500 to-orange-500',
     },
     {
       title: '写 Word 文档',
-      desc: '提纲、正文和格式化',
-      prompt: '帮我写一份项目复盘文档，包含目标、过程、结果、问题、改进计划，语气正式但不死板。',
+      desc: '新员工入职指南手册',
+      prompt: '帮我写一份新员工入职指南，包含公司简介、组织架构、办公环境介绍、常用系统账号开通流程、考勤制度、福利待遇、新人 30 天成长计划，语气亲切友好，让新人看了不慌。',
       tool: 'doc',
       icon: FileEdit,
       accent: 'from-emerald-500 to-teal-500',
     },
     {
       title: '画流程图',
-      desc: '流程、架构与关系图',
-      prompt: '帮我画一个客户从提交需求到交付验收的业务流程图，节点清晰，适合放进汇报材料。',
+      desc: '请假审批流程图',
+      prompt: '帮我画一个员工请假审批流程图：员工提交请假 → 直属领导审批 → 3天以上需部门总监审批 → HR 备案 → 通知本人结果，包含驳回和退回修改的分支，节点清晰，适合放进员工手册。',
       tool: 'drawio',
       icon: PenTool,
       accent: 'from-violet-500 to-fuchsia-500',
     },
     {
       title: 'AI 画图',
-      desc: '海报、插画和封面图',
-      prompt: '帮我生成一张适合公众号封面的科技感办公 AI 插画，画面干净高级，突出智能协作与效率提升。',
+      desc: '团队团建活动海报',
+      prompt: '帮我生成一张公司秋季团建活动海报，画面是阳光下的露营草地，大家围坐烧烤欢笑，背景有帐篷和远山，氛围轻松温暖，底部留出活动时间地点的文字区域。',
       tool: 'image',
       icon: ImageIcon,
       accent: 'from-pink-500 to-rose-500',
     },
     {
-      title: '生成视频',
-      desc: '脚本、分镜到短视频',
-      prompt: '帮我生成一段 15 秒产品介绍短视频，包含脚本、分镜和画面提示词，风格简洁有科技感。',
+      title: '生成动画片',
+      desc: '故事脚本到动画短片',
+      prompt: '帮我生成一段 15 秒的可爱动画片：一只小猫在办公室里踩键盘打字，结果屏幕上弹出了满屏的猫爪印，小猫吓得从椅子上摔下来，风格轻松搞笑，Q版萌系。',
       tool: 'video',
       icon: Clapperboard,
       accent: 'from-rose-500 to-orange-500',
@@ -517,6 +490,7 @@ export function ChatPanel({
 
       <div className="relative z-10 flex-1 overflow-y-auto px-5 pb-8 pt-10">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
+
           {messages.length === 0 && (
             <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
               <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-3xl border border-black/5 bg-white/80 shadow-[0_18px_50px_rgba(24,24,27,0.10)] backdrop-blur">
@@ -935,57 +909,12 @@ export function ChatPanel({
               </button>
             ))}
             <div className="ml-auto flex items-center">
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <button
-                    type="button"
-                    disabled={isStreaming}
-                    className="inline-flex h-9 items-center gap-2 rounded-full border border-black/[0.06] bg-white/78 px-2.5 text-[11px] font-medium text-surface-700 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all hover:-translate-y-[0.5px] hover:bg-white hover:shadow-[0_6px_14px_rgba(15,23,42,0.08)] disabled:opacity-50"
-                  >
-                    <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br ${activeTheme.swatchClass} shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]`}>
-                      <Palette className="h-3 w-3 text-white drop-shadow-[0_1px_1px_rgba(15,23,42,0.3)]" />
-                    </span>
-                    <span className="text-surface-500">主题</span>
-                    <span className="font-semibold text-surface-900">{activeTheme.name}</span>
-                    <ChevronDown className="h-3.5 w-3.5 text-surface-400" />
-                  </button>
-                </DropdownMenu.Trigger>
-
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    align="end"
-                    sideOffset={8}
-                    className="z-50 min-w-[228px] rounded-2xl border border-black/[0.06] bg-[#fffdfa]/96 p-2 shadow-[0_18px_48px_rgba(15,23,42,0.16)] backdrop-blur-xl"
-                  >
-                    <div className="px-2 pb-2 pt-1">
-                      <div className="text-[11px] font-semibold text-surface-900">选择主题风格</div>
-                      <div className="mt-0.5 text-[10px] text-surface-400">当前生成内容会优先贴合所选风格。</div>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      {themes.map((theme) => (
-                        <DropdownMenu.Item
-                          key={theme.id}
-                          onSelect={() => onThemeChange(theme.id)}
-                          className={`flex cursor-pointer items-center gap-2 rounded-2xl px-2 py-2 text-[11px] outline-none transition-colors ${
-                            selectedTheme === theme.id
-                              ? 'bg-surface-950 text-white shadow-sm'
-                              : 'text-surface-700 hover:bg-white focus:bg-white'
-                          }`}
-                        >
-                          <span className={`h-7 w-7 rounded-full bg-gradient-to-br ${theme.swatchClass} shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]`} />
-                          <span className="min-w-0 flex-1">
-                            <span className="block font-semibold">{theme.name}</span>
-                            <span className={`block text-[10px] ${selectedTheme === theme.id ? 'text-white/70' : 'text-surface-400'}`}>
-                              {theme.description}
-                            </span>
-                          </span>
-                          {selectedTheme === theme.id && <Check className="h-3.5 w-3.5" />}
-                        </DropdownMenu.Item>
-                      ))}
-                    </div>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+              <ToolConfigDropdown
+                activeTool={activeTool}
+                toolConfig={toolConfig}
+                onToolConfigChange={onToolConfigChange}
+                disabled={isStreaming}
+              />
             </div>
           </div>
           </div>

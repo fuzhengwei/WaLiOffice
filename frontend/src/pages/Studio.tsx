@@ -10,7 +10,7 @@ import { ConversationSidebar } from '@/components/history/ConversationSidebar'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { AlertCircle, CheckCircle2, Info, Play, X, PanelRightClose, PanelRight } from 'lucide-react'
-import type { AppSettings, Artifact, ChatAttachment, ConversationRecord, LLMProfile, PersistedSession, ProjectMeta, ToolKind } from '@/types'
+import type { AppSettings, Artifact, ChatAttachment, ConversationRecord, LLMProfile, PersistedSession, ProjectMeta, ToolKind, ToolConfigMap } from '@/types'
 const LOGO_URL = '/logo.png'
 
 type ToastTone = 'success' | 'error' | 'info'
@@ -179,6 +179,7 @@ export default function Studio() {
   const [streamPhase, setStreamPhase] = useState<'idle' | 'thinking' | 'generating' | 'finishing' | 'done' | 'error'>('idle')
   const [processLogs, setProcessLogs] = useState<string[]>([])
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  const [toolConfig, setToolConfig] = useState<ToolConfigMap>({})
   const [sidebarWidth, setSidebarWidth] = useState(getStoredSidebarWidth)
   const [toast, setToast] = useState<ToastState | null>(null)
 
@@ -1000,7 +1001,8 @@ export default function Studio() {
           }
         },
         token,
-        abortController.signal
+        abortController.signal,
+        toolConfig
       )
     } catch (err) {
       console.error('Chat error:', err)
@@ -1391,6 +1393,7 @@ export default function Studio() {
                 selectedModel={selectedModel}
                 artifacts={artifacts}
                 activeArtifactId={activeArtifactId}
+                toolConfig={toolConfig}
                 onProjectChange={(pid) => pid ? handleSelectProject(pid) : setActiveProjectId(null)}
                 onNewProject={handleNewProject}
                 onModelChange={handleModelChange}
@@ -1399,6 +1402,7 @@ export default function Studio() {
                 onInputChange={setInput}
                 onSend={handleSend}
                 onStop={handleStop}
+                onToolConfigChange={setToolConfig}
                 attachments={attachments}
                 onPickAttachments={handlePickAttachments}
                 onRemoveAttachment={handleRemoveAttachment}

@@ -286,6 +286,22 @@ function DrawIoArtifact({ artifact, onUpdate }: { artifact: Artifact, onUpdate: 
           urlParameters={mode === 'preview'
             ? { chrome: true, nav: true, layers: false, lightbox: false, spin: true }
             : { ui: 'kennedy', spin: true, libraries: true, saveAndExit: false }}
+          configuration={mode === 'edit' ? {
+            defaultLibraries: 'general;uml;er;bpmn;flowchart;basic;arrows2',
+            enabledLibraries: null,
+            defaultVertexStyle: { rounded: '1', whiteSpace: 'wrap', html: '1', fillColor: '#dae8fc', strokeColor: '#6c8ebf' },
+            defaultEdgeStyle: { edgeStyle: 'orthogonalEdgeStyle', rounded: '1', orthogonalLoop: '1', jetSize: 'auto', html: '1', strokeColor: '#6c8ebf' },
+            presetColors: ['dae8fc', 'd5e8d4', 'fff2cc', 'f8cecc', 'e1d5e7', 'ffe6cc', 'f5f5f5', 'ffffff', '000000', '333333', '666666', '999999'],
+            defaultColors: ['f5f5f5', 'e6e6e6', 'd9d9d9', 'cccccc', 'b3b3b3', '999999', '808080', '666666', '4d4d4d', '333333', '1a1a1a', '000000'],
+            defaultColorSchemes: [
+              { fill: '#dae8fc', stroke: '#6c8ebf', font: '#1e3a5f', title: '蓝色' },
+              { fill: '#d5e8d4', stroke: '#82b366', font: '#2d5016', title: '绿色' },
+              { fill: '#fff2cc', stroke: '#d6b656', font: '#5c4a04', title: '黄色' },
+              { fill: '#f8cecc', stroke: '#b85450', font: '#5a1a17', title: '红色' },
+              { fill: '#e1d5e7', stroke: '#9673a6', font: '#3d2060', title: '紫色' },
+              { fill: '#ffe6cc', stroke: '#d79b00', font: '#5c3a00', title: '橙色' },
+            ],
+          } : undefined}
           onAutoSave={mode === 'edit' ? ((data) => onUpdate({ content: { ...artifact.content, xml: data.xml || xml }, status: 'ready' })) : undefined}
           onSave={mode === 'edit' ? ((data) => onUpdate({ content: { ...artifact.content, xml: data.xml || xml }, status: 'ready' })) : undefined}
           onExport={mode === 'edit' ? ((data) => onUpdate({ content: { ...artifact.content, preview: data.data }, status: 'ready' })) : undefined}

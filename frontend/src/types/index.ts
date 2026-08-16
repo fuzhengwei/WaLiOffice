@@ -66,6 +66,14 @@ export interface Artifact {
   updated_at: string;
 }
 
+export interface ToolConfigOption {
+  key: string;
+  label: string;
+  type: 'select' | 'toggle';
+  options?: Array<{ value: string; label: string; description?: string }>;
+  defaultValue: string | boolean;
+}
+
 export interface AgentToolConfig {
   id: ToolKind;
   name: string;
@@ -74,7 +82,10 @@ export interface AgentToolConfig {
   artifactLabel: string;
   promptPlaceholder: string;
   examples: string[];
+  configOptions?: ToolConfigOption[];
 }
+
+export type ToolConfigMap = Partial<Record<string, string | boolean>>;
 
 export interface ConversationRecord {
   id: string;

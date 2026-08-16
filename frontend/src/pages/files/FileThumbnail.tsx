@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   FileText, Image, FileSpreadsheet, FileType, FileCode,
-  File as FileIcon,
+  File as FileIcon, Play,
 } from 'lucide-react'
 import { fileApi } from '@/api'
 import type { FileItem } from '@/types'
@@ -13,7 +13,7 @@ const FILE_ICONS: Record<string, typeof FileIcon> = {
   excel: FileSpreadsheet,
   sheet: FileSpreadsheet,
   image: Image,
-  video: FileType,
+  video: Play,
   drawio: FileCode,
   code: FileCode,
   other: FileIcon,

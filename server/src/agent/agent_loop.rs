@@ -9,56 +9,10 @@ use super::tool::{ToolContext, ToolResult};
 use crate::llm::FunctionDef;
 use crate::models::{Artifact, ChatMessage};
 
-fn direct_media_tool(allowed_tools: Option<&Vec<String>>) -> Option<&'static str> {
-    let allowed = allowed_tools?;
-    if allowed.len() != 1 {
-        return None;
-    }
-
-    match allowed.first().map(String::as_str) {
-        Some("image_prompt") => Some("image_prompt"),
-        Some("video_generate") => Some("video_generate"),
-        _ => None,
-    }
-}
-
-fn clean_direct_topic(user_message: &str, fallback: &str) -> String {
-    let topic = user_message
-        .split("\n\n用户本次还上传了")
-        .next()
-        .unwrap_or(user_message)
-        .trim();
-
-    if topic.is_empty() {
-        fallback.to_string()
-    } else {
-        topic.to_string()
-    }
-}
-
-fn direct_media_input(
-    tool_name: &str,
-    user_message: &str,
-    user_attachments: &[crate::models::ChatAttachment],
-) -> serde_json::Value {
-    let image_count = user_attachments
-        .iter()
-        .filter(|item| item.kind == "image")
-        .count();
-    let has_image = image_count > 0;
-
-    match tool_name {
-        "image_prompt" => serde_json::json!({
-            "topic": clean_direct_topic(user_message, "基于上传图片生成图片"),
-            "mode": if has_image { "image_to_image" } else { "text_to_image" },
-        }),
-        "video_generate" => serde_json::json!({
-            "topic": clean_direct_topic(user_message, "基于上传图片生成视频"),
-            "mode": if image_count > 1 { "keyframes" } else if has_image { "image_to_video" } else { "text_to_video" },
-        }),
-        _ => serde_json::json!({}),
-    }
-}
+// NOTE: direct_media_tool / clean_direct_topic / direct_media_input 已移除。
+// 原实现会在 allowed_tools 只有一个工具时跳过 LLM 推理直接调用工具，
+// 导致意图误判（如"先帮我写提示词"被直接送到 video_generate）。
+// 现在所有请求都走标准 ReAct 循环，由 LLM 决定是否调用工具。
 
 /// Agent 事件（通过 channel 向上层推送）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +95,17 @@ const OFFICE_AGENT_PROMPT: &str = r#"你是一个智能办公 Agent，可以帮�
 - video_generate: 基于 Agnes Video V2.0 生成视频结果，返回可直接预览的 mp4 视频链接
 - web_search: 联网搜索公开网页资料，适合查找最新信息、官网说明、新闻和政策
 
+## 意图优先级与时序规则（必须遵守）
+- 当用户说"先做X""帮我写/想/构思/规划X""先出个方案/提示词/大纲"时，当前意图是文本/文档生成，不是直接执行最终产物
+  - "先帮我写提示词""写提示词""出提示词" → 用 md_generate 生成提示词文档，或直接回复文本
+  - "帮我构思一个方案""先规划一下" → 用 md_generate 或 doc_generate
+  - "帮我写脚本""写个脚本" → 用 md_generate 或 doc_generate
+  - "帮我设计""先出个方案" → 用 md_generate 或 doc_generate
+- 当用户说"先做X，再做Y""先X然后Y"时，必须分步执行，先完成X再考虑Y，不要跳到Y
+- 当用户只是表达"想做什么"（愿望/设想），而非"现在做什么"（指令）时，应先帮助用户规划或出方案，而非直接生成
+- "写提示词""出提示词""帮我写prompt" → 文本输出意图，不触发图片/视频生成工具
+- "动画"在用户说"想做一个动画片"时，如果前面有"先写/先构思/帮我规划/帮我写"等修饰，应识别为文本/文档意图，不调用 video_generate
+
 ## 意图识别规则
 - PPT/演示文稿/幻灯片/presentation/汇报材料/做个PPT → 先调 ppt_plan 再调 ppt_generate
 - Word/文档/报告/PRD/方案/docx → doc_generate
@@ -206,7 +171,8 @@ pub async fn run_agent_loop(
         let system_prompt = if config.system_prompt.is_empty() {
             OFFICE_AGENT_PROMPT.to_string()
         } else {
-            config.system_prompt
+            // system_prompt 作为意图上下文补充，拼接到 OFFICE_AGENT_PROMPT 后面
+            format!("{}\n{}", OFFICE_AGENT_PROMPT, config.system_prompt)
         };
 
         // 获取工具定义
@@ -222,8 +188,10 @@ pub async fn run_agent_loop(
         } else {
             REGISTRY.to_function_defs().await
         };
+        // 有图片附件时，LLM 可以直接结合视觉输入回答，不需要额外工具
+        // 但仍保留工具定义，让 LLM 决定是否调用
         if user_attachments.iter().any(|item| item.kind == "image")
-            && direct_media_tool(allowed_tool_names.as_ref()).is_none()
+            && allowed_tool_names.is_none()
         {
             function_defs.clear();
         }
@@ -250,76 +218,7 @@ pub async fn run_agent_loop(
 
         let mut all_artifacts: Vec<Artifact> = Vec::new();
 
-        if let Some(tool_name) = direct_media_tool(allowed_tool_names.as_ref()) {
-            let input = direct_media_input(tool_name, &user_message, &user_attachments);
-            let _ = tx
-                .send(AgentEvent::ToolCall {
-                    tool: tool_name.to_string(),
-                    input: input.clone(),
-                })
-                .await;
-
-            info!("[ToolLog] {} → {}", ctx.session_id, tool_name);
-            let result = match REGISTRY.get(tool_name).await {
-                Some(tool) => tool.call(input, &ctx).await,
-                None => ToolResult::err(format!(
-                    "工具 \"{tool_name}\" 未注册。可用工具: {}",
-                    all_tools
-                        .iter()
-                        .map(|t| t.name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-            };
-
-            let _ = tx
-                .send(AgentEvent::ToolResult {
-                    tool: tool_name.to_string(),
-                    success: result.success,
-                    result: result.data.clone().unwrap_or(serde_json::Value::Null),
-                    error: result.error.clone(),
-                })
-                .await;
-
-            if result.success {
-                if let Some(artifacts) = &result.artifacts {
-                    for art in artifacts {
-                        let artifact = Artifact {
-                            id: Uuid::new_v4().to_string(),
-                            kind: art.kind.clone(),
-                            tool_kind: map_artifact_to_tool_kind(&art.kind),
-                            title: art.title.clone(),
-                            status: "ready".to_string(),
-                            content: art.content.clone(),
-                            version: 1,
-                            created_at: chrono::Utc::now().to_rfc3339(),
-                            updated_at: chrono::Utc::now().to_rfc3339(),
-                        };
-                        all_artifacts.push(artifact.clone());
-                        let _ = tx.send(AgentEvent::Artifact { artifact }).await;
-                    }
-                }
-            }
-
-            let summary = if result.success {
-                result.observation
-            } else {
-                format!("生成失败：{}", result.observation)
-            };
-            let _ = tx
-                .send(AgentEvent::Message {
-                    content: summary.clone(),
-                })
-                .await;
-            let _ = tx
-                .send(AgentEvent::Done {
-                    summary,
-                    artifacts: all_artifacts,
-                })
-                .await;
-            return;
-        }
-
+        // 所有请求都走标准 ReAct 循环，由 LLM 决定是否调用工具
         for turn in 0..max_turns {
             // 调用 LLM
             let tools = if function_defs.is_empty() {

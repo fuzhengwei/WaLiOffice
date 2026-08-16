@@ -4,7 +4,7 @@ import {
   Upload, Search, Download, Trash2, Folder as FolderIcon,
   FileText, Image, FileSpreadsheet, FileType, FileCode,
   File as FileIcon, FolderPlus, ChevronRight, HardDrive, Sparkles,
-  LayoutGrid, List, Eye,
+  LayoutGrid, List, Eye, Play,
 } from 'lucide-react'
 import { fileApi, folderApi } from '@/api'
 import type { FileItem, Folder } from '@/types'
@@ -18,7 +18,7 @@ const FILE_ICONS: Record<string, typeof FileIcon> = {
   excel: FileSpreadsheet,
   sheet: FileSpreadsheet,
   image: Image,
-  video: FileType,
+  video: Play,
   drawio: FileCode,
   code: FileCode,
   other: FileIcon,
