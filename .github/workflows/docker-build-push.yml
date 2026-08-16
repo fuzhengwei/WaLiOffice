@@ -46,8 +46,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.ALIYUN_REGISTRY }}
-          username: ${{ secrets.ALIYUN_ACR_USERNAME }}
-          password: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+          username: ${{ secrets.ALIYUN_USERNAME }}
+          password: ${{ secrets.ALIYUN_PASSWORD }}
 
       # ── 4. 构建并推送镜像 ──
       - name: Build and Push

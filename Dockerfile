@@ -7,7 +7,7 @@ COPY frontend/ .
 RUN npm run build
 
 # ── Stage 2: 构建后端 ──
-FROM docker.1ms.run/rust:1.80-bookworm AS server
+FROM docker.1ms.run/rust:1.85-bookworm AS server
 WORKDIR /srv
 # 使用国内 crates.io 镜像加速
 RUN mkdir -p /usr/local/cargo && \
