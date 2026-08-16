@@ -66,9 +66,6 @@ jobs:
           # 关闭 attestation（阿里云 ACR 不支持）
           provenance: false
           sbom: false
-          # 构建缓存加速
-          cache-from: type=registry,ref=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       # ── 6. 输出镜像信息 ──
       - name: Image Info
