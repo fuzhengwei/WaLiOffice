@@ -63,6 +63,9 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           # 多架构构建（可选，需要时取消注释）
           # platforms: linux/amd64,linux/arm64
+          # 关闭 attestation（阿里云 ACR 不支持）
+          provenance: false
+          sbom: false
           # 构建缓存加速
           cache-from: type=registry,ref=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
