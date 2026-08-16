@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import type React from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth-store'
 import { usePPTStore } from '@/stores/ppt-store'
 import { chatApi, docApi, excelApi, pptApi, sessionApi, projectApi, settingsApi, fileApi } from '@/api'
@@ -153,6 +153,7 @@ function blobToDataUrl(blob: Blob) {
 
 export default function Studio() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const logout = useAuthStore((s) => s.logout)
   const {
     project, slides, currentSlideIndex, messages,
@@ -256,8 +257,10 @@ export default function Studio() {
   }
 
   const refreshConversations = async (query = conversationQuery) => {
+    console.log('[refreshConversations] called, query=', query)
     try {
       const res = await sessionApi.listSessions({ q: query || undefined, page: 1, page_size: 50 })
+      console.log('[refreshConversations] response:', res.data)
       const rows = (res.data.sessions || []).map((item: any) => ({
         id: item.id,
         title: item.title || '未命名会话',
@@ -268,9 +271,10 @@ export default function Studio() {
         order_col: item.order_col || 0,
         project_id: item.project_id,
       }))
+      console.log('[refreshConversations] parsed rows:', rows.length, rows.slice(0, 2))
       setConversations(rows)
     } catch (err) {
-      console.error('Load conversations error:', err)
+      console.error('[refreshConversations] error:', err)
     }
   }
 
@@ -278,7 +282,22 @@ export default function Studio() {
     loadSettings()
     refreshProjects()
     refreshConversations('')
+    // 从 URL 恢复会话
+    const restoreSessionId = searchParams.get('s')
+    if (restoreSessionId) {
+      handleSelectConversation(restoreSessionId)
+    }
   }, [])
+
+  // sessionId 变化时同步到 URL
+  useEffect(() => {
+    const current = searchParams.get('s')
+    if (sessionId && current !== sessionId) {
+      setSearchParams({ s: sessionId }, { replace: true })
+    } else if (!sessionId && current) {
+      setSearchParams({}, { replace: true })
+    }
+  }, [sessionId])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -340,6 +359,7 @@ export default function Studio() {
     setActiveView('chat')
     refreshConversations()
     reset()
+    setSearchParams({}, { replace: true })
     autoExportedArtifactIdsRef.current.clear()
     autoSavedArtifactIdsRef.current.clear()
     setActiveTool('general')
@@ -421,6 +441,7 @@ export default function Studio() {
       await sessionApi.deleteSession(id)
       if (sessionId === id) {
         reset()
+        setSearchParams({}, { replace: true })
       }
       refreshConversations()
       refreshProjects()
@@ -841,8 +862,10 @@ export default function Studio() {
                 })
               }
               if (data.session_id) {
+                const prevSessionId = sessionId
                 setSessionId(data.session_id)
-                if (data.start) {
+                // 首次获得 session_id 时立即刷新列表，让当前对话出现在侧边栏
+                if (!prevSessionId) {
                   refreshConversations()
                   refreshProjects()
                 }
@@ -962,6 +985,9 @@ export default function Studio() {
               setStreamPhase('done')
               setStreamStatus(doneArtifacts.length > 0 ? '生成完成' : '回复完成')
               if (data.session_id) setSessionId(data.session_id)
+              // 确保对话结束后立即刷新列表，让当前对话出现在侧边栏
+              refreshConversations()
+              refreshProjects()
               if (Array.isArray(data.artifacts)) {
                 data.artifacts.forEach((artifact: Artifact) => upsertArtifact(artifact))
                 if (data.artifacts.length > 0) {

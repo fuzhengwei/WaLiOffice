@@ -75,7 +75,7 @@ pub async fn create(
 
 pub async fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<SessionRow>> {
     let row = sqlx::query(
-        "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, order_col, created_at, updated_at
+        "SELECT id, owner_id, project_id, tool_kind, title, CAST(summary AS CHAR) AS summary, message_count, order_col, created_at, updated_at
          FROM sessions WHERE id = ?"
     )
     .bind(id)
@@ -84,16 +84,16 @@ pub async fn find_by_id(pool: &DbPool, id: &str) -> AppResult<Option<SessionRow>
 
     match row {
         Some(r) => Ok(Some(SessionRow {
-            id: r.try_get(0)?,
-            owner_id: r.try_get(1)?,
-            project_id: r.try_get(2)?,
-            tool_kind: r.try_get(3)?,
-            title: r.try_get(4)?,
-            summary: r.try_get(5)?,
-            message_count: r.try_get(6)?,
-            order_col: r.try_get(7)?,
-            created_at: r.try_get(8)?,
-            updated_at: r.try_get(9)?,
+            id: r.try_get(0).map_err(|e| { tracing::error!("[Session] find_by_id col 0 (id) error: {:?}", e); e })?,
+            owner_id: r.try_get(1).map_err(|e| { tracing::error!("[Session] find_by_id col 1 (owner_id) error: {:?}", e); e })?,
+            project_id: r.try_get(2).map_err(|e| { tracing::error!("[Session] find_by_id col 2 (project_id) error: {:?}", e); e })?,
+            tool_kind: r.try_get(3).map_err(|e| { tracing::error!("[Session] find_by_id col 3 (tool_kind) error: {:?}", e); e })?,
+            title: r.try_get(4).map_err(|e| { tracing::error!("[Session] find_by_id col 4 (title) error: {:?}", e); e })?,
+            summary: r.try_get(5).map_err(|e| { tracing::error!("[Session] find_by_id col 5 (summary) error: {:?}", e); e })?,
+            message_count: r.try_get(6).map_err(|e| { tracing::error!("[Session] find_by_id col 6 (message_count) error: {:?}", e); e })?,
+            order_col: r.try_get(7).map_err(|e| { tracing::error!("[Session] find_by_id col 7 (order_col) error: {:?}", e); e })?,
+            created_at: r.try_get(8).map_err(|e| { tracing::error!("[Session] find_by_id col 8 (created_at) error: {:?}", e); e })?,
+            updated_at: r.try_get(9).map_err(|e| { tracing::error!("[Session] find_by_id col 9 (updated_at) error: {:?}", e); e })?,
         })),
         None => Ok(None),
     }
@@ -109,9 +109,11 @@ pub async fn list_by_owner(
         .map(|item| format!("%{}%", item.trim()))
         .filter(|item| item != "%%");
 
+    tracing::info!("[Sessions] list_by_owner: owner_id={}, limit={}, has_query={}", owner_id, limit, q.is_some());
+
     let rows = if let Some(ref qv) = q {
         sqlx::query(
-            "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, order_col, created_at, updated_at
+            "SELECT id, owner_id, project_id, tool_kind, title, CAST(summary AS CHAR) AS summary, message_count, order_col, created_at, updated_at
              FROM sessions
              WHERE owner_id = ? AND (title LIKE ? OR COALESCE(summary, '') LIKE ?)
              ORDER BY order_col ASC, updated_at DESC LIMIT ?"
@@ -124,7 +126,7 @@ pub async fn list_by_owner(
         .await?
     } else {
         sqlx::query(
-            "SELECT id, owner_id, project_id, tool_kind, title, summary, message_count, order_col, created_at, updated_at
+            "SELECT id, owner_id, project_id, tool_kind, title, CAST(summary AS CHAR) AS summary, message_count, order_col, created_at, updated_at
              FROM sessions WHERE owner_id = ? ORDER BY order_col ASC, updated_at DESC LIMIT ?"
         )
         .bind(owner_id)
@@ -133,19 +135,26 @@ pub async fn list_by_owner(
         .await?
     };
 
+    tracing::info!("[Sessions] list_by_owner: fetched {} rows", rows.len());
+    if !rows.is_empty() {
+        let first_id: String = rows[0].try_get(0).unwrap_or_default();
+        let first_title: String = rows[0].try_get(4).unwrap_or_default();
+        tracing::info!("[Sessions] first row: id={}, title={}", first_id, first_title);
+    }
+
     let mut result = Vec::new();
-    for row in rows {
+    for (i, row) in rows.iter().enumerate() {
         result.push(SessionRow {
-            id: row.try_get(0)?,
-            owner_id: row.try_get(1)?,
-            project_id: row.try_get(2)?,
-            tool_kind: row.try_get(3)?,
-            title: row.try_get(4)?,
-            summary: row.try_get(5)?,
-            message_count: row.try_get(6)?,
-            order_col: row.try_get(7)?,
-            created_at: row.try_get(8)?,
-            updated_at: row.try_get(9)?,
+            id: row.try_get(0).map_err(|e| { tracing::error!("[Sessions] row {} col 0 (id) error: {:?}", i, e); e })?,
+            owner_id: row.try_get(1).map_err(|e| { tracing::error!("[Sessions] row {} col 1 (owner_id) error: {:?}", i, e); e })?,
+            project_id: row.try_get(2).map_err(|e| { tracing::error!("[Sessions] row {} col 2 (project_id) error: {:?}", i, e); e })?,
+            tool_kind: row.try_get(3).map_err(|e| { tracing::error!("[Sessions] row {} col 3 (tool_kind) error: {:?}", i, e); e })?,
+            title: row.try_get(4).map_err(|e| { tracing::error!("[Sessions] row {} col 4 (title) error: {:?}", i, e); e })?,
+            summary: row.try_get(5).map_err(|e| { tracing::error!("[Sessions] row {} col 5 (summary) error: {:?}", i, e); e })?,
+            message_count: row.try_get(6).map_err(|e| { tracing::error!("[Sessions] row {} col 6 (message_count) error: {:?}", i, e); e })?,
+            order_col: row.try_get(7).map_err(|e| { tracing::error!("[Sessions] row {} col 7 (order_col) error: {:?}", i, e); e })?,
+            created_at: row.try_get(8).map_err(|e| { tracing::error!("[Sessions] row {} col 8 (created_at) error: {:?}", i, e); e })?,
+            updated_at: row.try_get(9).map_err(|e| { tracing::error!("[Sessions] row {} col 9 (updated_at) error: {:?}", i, e); e })?,
         });
     }
     Ok(result)
@@ -249,7 +258,8 @@ pub async fn get_artifacts(pool: &DbPool, session_id: &str) -> AppResult<Vec<Art
 
     match row {
         Some(r) => {
-            let payload: String = r.try_get(0)?;
+            let payload_bytes: Vec<u8> = r.try_get(0).map_err(|e| { tracing::error!("[Artifacts] col 0 (payload) error: {:?}", e); e })?;
+            let payload = String::from_utf8_lossy(&payload_bytes).to_string();
             Ok(serde_json::from_str::<Vec<Artifact>>(&payload)?)
         }
         None => Ok(vec![]),
@@ -326,10 +336,13 @@ pub async fn get_messages(pool: &DbPool, session_id: &str, limit: i64) -> AppRes
     let mut result = Vec::new();
     for row in rows {
         let role: String = row.try_get(0)?;
-        let content: String = row.try_get(1)?;
-        let tool_input: Option<String> = row.try_get(2)?;
-        let tool_output: Option<String> = row.try_get(3)?;
-        let tool_calls = tool_input.and_then(|s| serde_json::from_str(&s).ok());
+        let content_bytes: Vec<u8> = row.try_get(1)?;
+        let content = String::from_utf8_lossy(&content_bytes).to_string();
+        let tool_input: Option<Vec<u8>> = row.try_get(2)?;
+        let tool_input = tool_input.map(|b| String::from_utf8_lossy(&b).to_string());
+        let tool_output: Option<Vec<u8>> = row.try_get(3)?;
+        let tool_output = tool_output.map(|b| String::from_utf8_lossy(&b).to_string());
+        let tool_calls = tool_input.as_ref().and_then(|s| serde_json::from_str(s).ok());
         let tool_call_id = tool_output;
         result.push(ChatMessage {
             role,
@@ -356,13 +369,16 @@ pub async fn get_persisted_messages(
     .await?;
 
     let mut result = Vec::new();
-    for row in rows {
-        let role: String = row.try_get(0)?;
-        let content: String = row.try_get(1)?;
-        let tool_input: Option<String> = row.try_get(2)?;
-        let tool_output: Option<String> = row.try_get(3)?;
-        let created_at: String = row.try_get(4)?;
-        let tool_calls = tool_input.and_then(|s| serde_json::from_str(&s).ok());
+    for (i, row) in rows.iter().enumerate() {
+        let role: String = row.try_get(0).map_err(|e| { tracing::error!("[Messages] row {} col 0 (role) error: {:?}", i, e); e })?;
+        let content_bytes: Vec<u8> = row.try_get(1).map_err(|e| { tracing::error!("[Messages] row {} col 1 (content) error: {:?}", i, e); e })?;
+        let content = String::from_utf8_lossy(&content_bytes).to_string();
+        let tool_input: Option<Vec<u8>> = row.try_get(2).map_err(|e| { tracing::error!("[Messages] row {} col 2 (tool_input) error: {:?}", i, e); e })?;
+        let tool_input = tool_input.map(|b| String::from_utf8_lossy(&b).to_string());
+        let tool_output: Option<Vec<u8>> = row.try_get(3).map_err(|e| { tracing::error!("[Messages] row {} col 3 (tool_output) error: {:?}", i, e); e })?;
+        let tool_output = tool_output.map(|b| String::from_utf8_lossy(&b).to_string());
+        let created_at: String = row.try_get(4).map_err(|e| { tracing::error!("[Messages] row {} col 4 (created_at) error: {:?}", i, e); e })?;
+        let tool_calls = tool_input.as_ref().and_then(|s| serde_json::from_str(s).ok());
         result.push(PersistedChatMessage {
             role,
             content,

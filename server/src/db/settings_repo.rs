@@ -14,7 +14,8 @@ pub async fn find_by_user(pool: &DbPool, user_id: &str) -> AppResult<Option<AppS
 
     match row {
         Some(r) => {
-            let payload: String = r.try_get(0)?;
+            let payload_bytes: Vec<u8> = r.try_get(0)?;
+            let payload = String::from_utf8_lossy(&payload_bytes).to_string();
             Ok(Some(serde_json::from_str::<AppSettings>(&payload)?))
         }
         None => Ok(None),

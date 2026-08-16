@@ -438,40 +438,47 @@ export function ConversationSidebar({
           })}
         </div>
 
-        {(unassignedConversations.length > 0 || draggingId) && (
-          <section className="mt-4">
-            <button
-              type="button"
-              onClick={() => setShowUnassigned(!showUnassigned)}
-              className="mb-2 flex w-full items-center justify-between px-1"
+        {/* 独立对话区域：始纱显示，即使为空也显示占位提示 */}
+        <section className="mt-4">
+          <button
+            type="button"
+            onClick={() => setShowUnassigned(!showUnassigned)}
+            className="mb-2 flex w-full items-center justify-between px-1"
+          >
+            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-surface-400">独立对话</span>
+            <span className="flex items-center gap-1.5 rounded-full bg-white/[0.58] px-2 py-0.5 text-[10px] font-bold text-surface-500 shadow-sm">
+              {unassignedConversations.length}
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showUnassigned ? '' : '-rotate-90'}`} />
+            </span>
+          </button>
+          {(showUnassigned || draggingId) && (
+            <div
+              onDragOver={(event) => handleDragOver(event, null)}
+              onDrop={(event) => handleDrop(event, null)}
+              className={`space-y-1.5 rounded-[1.6rem] border p-1.5 shadow-[0_12px_28px_rgba(24,24,27,0.035)] backdrop-blur ${isDropTarget(null) ? 'border-surface-950/20 bg-white/55 ring-2 ring-surface-950/10' : 'border-white/55 bg-white/30'}`}
             >
-              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-surface-400">独立对话</span>
-              <span className="flex items-center gap-1.5 rounded-full bg-white/[0.58] px-2 py-0.5 text-[10px] font-bold text-surface-500 shadow-sm">
-                {unassignedConversations.length}
-                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showUnassigned ? '' : '-rotate-90'}`} />
-              </span>
-            </button>
-            {(showUnassigned || draggingId) && (
-              <div
-                onDragOver={(event) => handleDragOver(event, null)}
-                onDrop={(event) => handleDrop(event, null)}
-                className={`space-y-1.5 rounded-[1.6rem] border p-1.5 shadow-[0_12px_28px_rgba(24,24,27,0.035)] backdrop-blur ${isDropTarget(null) ? 'border-surface-950/20 bg-white/55 ring-2 ring-surface-950/10' : 'border-white/55 bg-white/30'}`}
-              >
-                {unassignedConversations.slice(0, unassignedLimit).map((item) => renderConversationItem(item))}
-                {unassignedConversations.length > unassignedLimit && (
-                  <button
-                    type="button"
-                    onClick={() => setUnassignedLimit(unassignedLimit + 10)}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-2xl px-2.5 py-2 text-[11px] font-bold text-surface-500 hover:bg-white/70 hover:text-surface-800"
-                  >
-                    <MoreHorizontal className="h-3.5 w-3.5" />
-                    查看更多（{unassignedConversations.length - unassignedLimit} 条）
-                  </button>
-                )}
-              </div>
-            )}
-          </section>
-        )}
+              {unassignedConversations.length > 0 ? (
+                <>
+                  {unassignedConversations.slice(0, unassignedLimit).map((item) => renderConversationItem(item))}
+                  {unassignedConversations.length > unassignedLimit && (
+                    <button
+                      type="button"
+                      onClick={() => setUnassignedLimit(unassignedLimit + 10)}
+                      className="flex w-full items-center justify-center gap-1.5 rounded-2xl px-2.5 py-2 text-[11px] font-bold text-surface-500 hover:bg-white/70 hover:text-surface-800"
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5" />
+                      查看更多（{unassignedConversations.length - unassignedLimit} 条）
+                    </button>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-black/[0.06] bg-white/30 px-3 py-4 text-center text-[11px] font-medium text-surface-400">
+                  暂无独立对话
+                </div>
+              )}
+            </div>
+          )}
+        </section>
 
         {(currentConversations.length === 0 && filteredProjects.length === 0) && (
           <div className="rounded-[1.5rem] border border-dashed border-black/10 bg-white/58 px-4 py-8 text-center text-xs font-medium leading-relaxed text-surface-500">
