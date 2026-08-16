@@ -1,0 +1,66 @@
+# WaLiOffice DSH Profile
+# 基于 dsh-base，叠加 WaLiOffice 自定义的 Office 工具和配置
+
+- id: system-prompt
+  config:
+    persona: >-
+      你是 WaLiOffice 智能办公助手，由 {{model}} 模型驱动。你的工作目录是 {{cwd}}。
+      你可以帮助用户生成 PPT、Word 文档、Excel 表格、Draw.io 图表、图片、视频等办公内容。
+      你也可以进行网络搜索来获取最新信息。
+      当用户提出办公需求时，优先使用可用的办公工具来完成任务。
+
+- id: hmr
+  disabled: true
+
+- id: tools
+  config:
+    mode: native
+
+- id: agent-default-model
+  config:
+    provider: openai-compatible
+    model: deepseek-chat
+
+- insert:
+    # ── WaLiOffice 自定义 Office 工具 ──────────────────────────────────
+    - id: tool-ppt-plan
+      name: '@walioffice/dsh-tool-ppt-plan'
+
+    - id: tool-ppt-generate
+      name: '@walioffice/dsh-tool-ppt-generate'
+
+    - id: tool-doc-generate
+      name: '@walioffice/dsh-tool-doc-generate'
+
+    - id: tool-md-generate
+      name: '@walioffice/dsh-tool-md-generate'
+
+    - id: tool-sheet-generate
+      name: '@walioffice/dsh-tool-sheet-generate'
+
+    - id: tool-chart-generate
+      name: '@walioffice/dsh-tool-chart-generate'
+
+    - id: tool-drawio-generate
+      name: '@walioffice/dsh-tool-drawio-generate'
+
+    - id: tool-image-prompt
+      name: '@walioffice/dsh-tool-image-prompt'
+
+    - id: tool-video-generate
+      name: '@walioffice/dsh-tool-video-generate'
+
+    - id: tool-web-search
+      name: '@walioffice/dsh-tool-web-search'
+
+    # ── WaLiOffice 自定义 LLM 适配器 ──────────────────────────────────
+    - id: llm-openai-compatible
+      name: '@walioffice/dsh-llm-openai-compatible'
+
+    # ── WaLiOffice 自定义 HTTP Host ────────────────────────────────────
+    - id: walioffice-host
+      name: '@walioffice/dsh-host-http'
+
+    # ── WaLiOffice 自定义持久化 ────────────────────────────────────────
+    - id: walioffice-persistence
+      name: '@walioffice/dsh-persistence-sqlite'

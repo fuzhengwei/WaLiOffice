@@ -816,7 +816,7 @@ export default function Studio() {
     })
 
     try {
-      await chatApi.stream(
+      await chatApi.smartStream(
         message,
         activeProjectId,
         sessionId,

@@ -147,8 +147,81 @@ export const notificationApi = {
   delete: (id: string) => api.delete(`/notifications/${id}`),
 };
 
+// ===== DSH Agent Engine 状态 =====
+
+let _dshAvailable: boolean | null = null;
+
+export const dshApi = {
+  /** 检查 DSH Agent Engine 是否可用 */
+  checkStatus: async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_BASE}/agent/dsh/status`, {
+        headers: { Authorization: `Bearer ${useAuthStore.getState().token}` },
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      _dshAvailable = data.dsh_available === true;
+      return _dshAvailable;
+    } catch {
+      _dshAvailable = false;
+      return false;
+    }
+  },
+
+  /** 获取缓存的 DSH 可用状态 */
+  get available(): boolean | null {
+    return _dshAvailable;
+  },
+};
+
 // ===== 对话 API (SSE) =====
+
+/** SSE 流式读取的通用逻辑 */
+async function readSSEStream(
+  response: Response,
+  onEvent: (event: string, data: any) => void,
+) {
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder();
+
+  if (!reader) return;
+
+  let buffer = '';
+  let currentEvent = 'message';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          currentEvent = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          const dataStr = line.slice(5).trim();
+          if (dataStr) {
+            try {
+              const data = JSON.parse(dataStr);
+              onEvent(currentEvent, data);
+            } catch {
+              onEvent(currentEvent, dataStr);
+            }
+          }
+        } else if (line.trim() === '') {
+          currentEvent = 'message';
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export const chatApi = {
+  /** Rust 自研 Agent SSE 流式对话 */
   stream: async (
     message: string,
     projectId: string | null,
@@ -199,42 +272,117 @@ export const chatApi = {
       throw new Error(detail);
     }
 
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
+    await readSSEStream(response, onEvent);
+  },
 
-    if (!reader) return;
+  /** DSH Agent Engine SSE 流式对话（自动回退到 Rust 自研） */
+  dshStream: async (
+    message: string,
+    projectId: string | null,
+    sessionId: string | null,
+    theme: string | null,
+    toolKind: ToolKind,
+    model: string | null,
+    attachments: ChatAttachment[],
+    onEvent: (event: string, data: any) => void,
+    token: string,
+    signal?: AbortSignal,
+    toolConfig?: Record<string, any>
+  ) => {
+    // 优先尝试 DSH
+    if (_dshAvailable !== false) {
+      try {
+        const response = await fetch(`${API_BASE}/agent/dsh/stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            message,
+            project_id: projectId,
+            session_id: sessionId,
+            theme,
+            tool_kind: toolKind,
+            model,
+            attachments,
+            tool_config: toolConfig,
+          }),
+          signal,
+        });
 
-    let buffer = '';
-    let currentEvent = 'message';
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('event:')) {
-            currentEvent = line.slice(6).trim();
-          } else if (line.startsWith('data:')) {
-            const dataStr = line.slice(5).trim();
-            if (dataStr) {
-              try {
-                const data = JSON.parse(dataStr);
-                onEvent(currentEvent, data);
-              } catch {
-                onEvent(currentEvent, dataStr);
-              }
-            }
-          } else if (line.trim() === '') {
-            currentEvent = 'message';
-          }
+        if (response.ok) {
+          await readSSEStream(response, onEvent);
+          return;
         }
+
+        // DSH 不可用，回退到 Rust 自研
+        console.warn('DSH Agent Engine 不可用，回退到 Rust 自研路径');
+        _dshAvailable = false;
+      } catch (err) {
+        console.warn('DSH 请求失败，回退到 Rust 自研路径:', err);
+        _dshAvailable = false;
       }
-    } finally {
-      reader.releaseLock();
     }
+
+    // 回退到 Rust 自研 Agent
+    await chatApi.stream(
+      message,
+      projectId,
+      sessionId,
+      theme,
+      toolKind,
+      model,
+      attachments,
+      onEvent,
+      token,
+      signal,
+      toolConfig,
+    );
+  },
+
+  /** 智能选择后端（DSH 优先，自动回退） */
+  smartStream: async (
+    message: string,
+    projectId: string | null,
+    sessionId: string | null,
+    theme: string | null,
+    toolKind: ToolKind,
+    model: string | null,
+    attachments: ChatAttachment[],
+    onEvent: (event: string, data: any) => void,
+    token: string,
+    signal?: AbortSignal,
+    toolConfig?: Record<string, any>
+  ) => {
+    // 如果已知 DSH 可用，直接走 DSH
+    if (_dshAvailable === true) {
+      return chatApi.dshStream(
+        message, projectId, sessionId, theme, toolKind, model,
+        attachments, onEvent, token, signal, toolConfig,
+      );
+    }
+
+    // 如果已知 DSH 不可用，直接走 Rust
+    if (_dshAvailable === false) {
+      return chatApi.stream(
+        message, projectId, sessionId, theme, toolKind, model,
+        attachments, onEvent, token, signal, toolConfig,
+      );
+    }
+
+    // 未知状态，先检查 DSH
+    const available = await dshApi.checkStatus();
+    if (available) {
+      return chatApi.dshStream(
+        message, projectId, sessionId, theme, toolKind, model,
+        attachments, onEvent, token, signal, toolConfig,
+      );
+    }
+
+    return chatApi.stream(
+      message, projectId, sessionId, theme, toolKind, model,
+      attachments, onEvent, token, signal, toolConfig,
+    );
   },
 };

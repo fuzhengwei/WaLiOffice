@@ -1,0 +1,10 @@
+{
+  "name": "@walioffice/dsh-llm-openai-compatible",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.0",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6"
+  }
+}

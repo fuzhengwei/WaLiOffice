@@ -1,0 +1,114 @@
+# WaLiOffice DSH Profile
+# 在 dsh-base 之上叠加 WaLiOffice 的 Office 工具和自定义配置
+# patch 格式：每个条目通过 id 匹配已有行，覆盖其属性（整行替换，非深度合并）
+# insert: 不带 id 的 insert 列表追加到根；带 id 的 insert 追加到指定 group
+
+# ── Agent 默认模型：使用 OpenAI 兼容接口 ──
+- id: agent-default-model
+  config:
+    provider: openai-compatible
+    model: !!js process.env.LLM_TEXT_MODEL_DEFAULT || 'deepseek-chat'
+
+# ── 禁用 DeepSeek 官方适配器（我们用自己的 OpenAI 兼容适配器） ──
+- id: llm-deepseek
+  disabled: true
+
+# ── 禁用 DeepSeek Web 搜索（用我们自己的） ──
+- id: web-search-deepseek
+  disabled: true
+
+# ── Agent 配置：定义 WaLiOffice 的 Office Agent ──
+- id: agent-loop
+  config:
+    maxParallelToolCalls: 10
+    agents:
+      - id: office-agent
+        provider: openai-compatible
+        model: !!js process.env.LLM_TEXT_MODEL || 'deepseek-chat'
+
+# ── System Prompt：Office Agent 的角色设定 ──
+- id: system-prompt
+  config:
+    persona: |
+      你是 WaLiOffice 智能办公助手，专门帮助用户生成和编辑办公文档。
+      你可以生成 PPT、Word 文档、Excel 表格、Markdown、图表、Draw.io 图、图片和视频。
+      当用户提出需求时，先理解意图，再选择合适的工具执行。
+      多文件交付时，按顺序生成每个文件。
+      生成图片时，先优化提示词再调用图片生成。
+      搜索结果需要标注来源。
+
+# ── 工具配置 ──
+- id: tools
+  config:
+    mode: native
+
+# ── 沙箱：只读模式 ──
+- id: sandbox-policy
+  config:
+    mode: read-only
+
+# ── Session 持久化 ──
+- id: session-persistence-jsonl
+  config:
+    root: !!js process.env.WALIOFFICE_SESSION_DIR || '/tmp/walioffice-dsh-sessions'
+
+# ── 禁用不需要的内置工具 ──
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: tool-skill
+  disabled: true
+- id: tool-ralph
+  disabled: true
+- id: tool-str-replace-editor
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-goal
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-subagent-report
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-jobs
+  disabled: true
+
+# ── Web 搜索：保留但调整超时 ──
+- id: tool-web
+  config:
+    fetch: false
+    searchTimeoutMs: 30000
+
+# ── 插入 WaLiOffice 自定义插件 ──
+- insert:
+    # OpenAI 兼容 LLM 适配器
+    - id: llm-openai-compatible
+      name: '@walioffice/dsh-llm-openai-compatible'
+      config:
+        baseURL: !!js process.env.LLM_TEXT_BASE_URL || 'https://api.deepseek.com/v1'
+        apiKeyEnv: LLM_TEXT_API_KEY
+        models: !!js process.env.LLM_TEXT_MODELS || 'deepseek-chat'
+        defaultModel: !!js process.env.LLM_TEXT_MODEL_DEFAULT || 'deepseek-chat'
+
+    # HTTP Host（提供 SSE 接口给 Rust 后端代理）
+    - id: host-http
+      name: '@walioffice/dsh-host-http'
+      config:
+        port: !!js parseInt(process.env.DSH_PORT || '3780', 10)
+
+    # ── Office 工具插件（统一注册 10 个 Office 工具） ──
+    - id: walioffice-tools
+      name: '@walioffice/dsh-tools'
