@@ -621,7 +621,7 @@ fn artifact_filename(artifact: &Artifact, fallback: &str, extension: &str) -> St
     ensure_extension(&sanitize_filename(&artifact.title, fallback), extension)
 }
 
-async fn save_generated_artifact_to_files(pool: &DbPool, owner_id: &str, artifact: &Artifact) {
+pub async fn save_generated_artifact_to_files(pool: &DbPool, owner_id: &str, artifact: &Artifact) {
     tracing::info!("保存生成产物到文件: kind={}, title={}, artifact_id={}", artifact.kind, artifact.title, artifact.id);
     let description = format!("智能助手生成：{}", artifact.title);
     let metadata = serde_json::json!({

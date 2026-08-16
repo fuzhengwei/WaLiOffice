@@ -3,6 +3,14 @@
  *
  * 被 Rust 后端代理调用，提供 DSH Agent 的流式对话接口。
  * 使用 DSH AgentLoop 的 session event 系统获取流式输出。
+ *
+ * SSE 事件格式（与前端 Studio.tsx 对齐）：
+ * - state_update: { phase, step, detail } — 状态/思考过程
+ * - message: { text, start? } — AI 文字回复（流式分片）
+ * - tool_result: { tool, success, result: { observation } }
+ * - artifact_update: { artifact }
+ * - done: { session_id }
+ * - error: { message }
  */
 
 import http from 'node:http';
@@ -72,7 +80,6 @@ async function handleStream(req: http.IncomingMessage, res: http.ServerResponse,
 
     const sessionId = session_id || `session-${Date.now()}`;
 
-    // 创建 agent
     const handle = await agents.create({
       sessionId,
       agentOptions: {
@@ -83,119 +90,202 @@ async function handleStream(req: http.IncomingMessage, res: http.ServerResponse,
 
     const agent = handle.agent;
 
-    // 维护 callId → toolName 映射（用于 tool/result 事件）
-    const callIdToName = new Map<string, string>();
+    // 流式状态追踪
+    const state = {
+      callIdToName: new Map<string, string>(),
+      announcedTools: new Set<string>(),
+      reasoningBuf: '',       // 累积 reasoning 文本
+      reasoningSentLen: 0,    // 已发送的 reasoning 长度
+      textStarted: false,     // text block 是否已发 start
+      fullAssistantText: '',  // 完整 assistant 文本（用于去重 assistant/message）
+    };
 
-    // 订阅 session 事件，转发为 SSE
-    const eventListener = (subject: any, event: any) => {
+    const send = (type: string, data: any) => {
+      res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const eventListener = (_subject: any, event: any) => {
       try {
-        // tool/call: 记录 callId → name
+        // 预处理：记录 tool/call 的 callId→name
         if (event?.type === 'tool/call') {
           const cid = event.data?.callId || '';
           const cname = event.data?.name || '';
-          if (cid && cname) callIdToName.set(cid, cname);
+          if (cid && cname) state.callIdToName.set(cid, cname);
         }
 
-        const sseEvents = mapSessionEvent(event, callIdToName);
-        for (const sseEvent of sseEvents) {
-          res.write(`event: ${sseEvent.type}\ndata: ${JSON.stringify(sseEvent.data)}\n\n`);
+        const events = mapEvent(event, state);
+        for (const ev of events) {
+          send(ev.type, ev.data);
         }
       } catch (e) {
-        // ignore write errors
+        // ignore
       }
     };
 
-    // 监听 agent 上下文的 session 事件
     agent.ctx.on('session/event', eventListener);
 
-    // 也监听 agent 错误事件
-    agent.ctx.on('agent/error', (_subject: any, payload: any) => {
-      res.write(`event: error\ndata: ${JSON.stringify({ message: payload?.error?.message || 'agent error' })}\n\n`);
+    agent.ctx.on('agent/error', (_s: any, payload: any) => {
+      send('error', { message: payload?.error?.message || 'agent error' });
     });
 
-    // 发送用户消息
+    // 发送用户消息，触发 agent 循环
     agent.followup({ role: 'user', content: [{ type: 'text', text: message }] });
 
-    // 等待 agent 完成当前工作
+    // 等待 agent 完成
     await agent.whenIdle();
 
-    // 清理
-    
-
-    res.write('event: done\ndata: {}\n\n');
+    // 发送 done 事件
+    send('done', { session_id: sessionId });
   } catch (err: any) {
     res.write(`event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`);
   }
   res.end();
 }
 
-function mapSessionEvent(event: any, callIdToName?: Map<string, string>): { type: string; data: any }[] {
+// ─── 事件映射 ───
+
+interface StreamState {
+  callIdToName: Map<string, string>;
+  announcedTools: Set<string>;
+  reasoningBuf: string;
+  reasoningSentLen: number;
+  textStarted: boolean;
+  fullAssistantText: string;
+}
+
+function mapEvent(event: any, s: StreamState): { type: string; data: any }[] {
   if (!event || !event.type) return [];
   const d = event.data || {};
 
   switch (event.type) {
+    // ─── turn/step 边界 ───
     case 'turn/start':
+      return [{ type: 'state_update', data: { phase: 'running', step: '开始处理', detail: '正在分析您的请求...' } }];
+
     case 'turn/end':
     case 'step/start':
     case 'step/end':
     case 'request/header':
-      return []; // 内部事件，前端不需要
+      return [];
 
+    // ─── LLM 流式 chunk ───
     case 'assistant/chunk': {
       const chunk = d.chunk;
       if (!chunk) return [];
 
       switch (chunk.type) {
+        // LLM 文字输出
         case 'text-delta': {
           const text = chunk.text || chunk.delta || '';
-          if (text) return [{ type: 'message', data: { text } }];
+          if (!text) return [];
+          s.fullAssistantText += text;
+
+          // 第一次收到 text-delta 时发 start 标记
+          if (!s.textStarted) {
+            s.textStarted = true;
+            return [
+              { type: 'message', data: { text: '', start: true } },
+              { type: 'message', data: { text } },
+            ];
+          }
+          return [{ type: 'message', data: { text } }];
+        }
+
+        // LLM 推理输出（reasoning model 的思考过程）
+        case 'reasoning-delta': {
+          const text = chunk.text || chunk.delta || '';
+          if (!text) return [];
+          s.reasoningBuf += text;
+
+          // 每累积 ~100 字符发一次，避免刷屏
+          if (s.reasoningBuf.length - s.reasoningSentLen >= 100) {
+            s.reasoningSentLen = s.reasoningBuf.length;
+            return [{
+              type: 'state_update',
+              data: { phase: 'running', step: 'AI 思考中', detail: s.reasoningBuf.slice(-300) },
+            }];
+          }
           return [];
         }
-        case 'reasoning-delta': {
-          return [{ type: 'state_update', data: { step: '思考', detail: '正在推理...' } }];
-        }
+
+        // 工具调用增量（只记录映射，不发事件）
         case 'tool-call-delta': {
-          if (chunk.id && chunk.name && callIdToName) {
-            callIdToName.set(chunk.id, chunk.name);
+          if (chunk.id && chunk.name) {
+            s.callIdToName.set(chunk.id, chunk.name);
           }
-          const toolName = chunk.name || (chunk.id && callIdToName?.get(chunk.id)) || '工具';
-          return [{ type: 'state_update', data: { step: '工具调用', detail: `正在调用 ${toolName}` } }];
+          return [];
         }
+
+        // block 边界
         case 'block-start': {
           if (chunk.blockType === 'reasoning') {
-            return [{ type: 'state_update', data: { step: '思考', detail: '正在推理...' } }];
+            s.reasoningBuf = '';
+            s.reasoningSentLen = 0;
+            return [{ type: 'state_update', data: { phase: 'running', step: 'AI 思考中', detail: '正在思考...' } }];
           }
-          if (chunk.blockType === 'text') {
-            return [{ type: 'message', data: { text: '', start: true } }];
+          // text block start — 不发 message start，等第一个 text-delta
+          return [];
+        }
+
+        case 'block-end': {
+          // reasoning block 结束 — 发送最终推理摘要
+          if (s.reasoningBuf && s.reasoningSentLen < s.reasoningBuf.length) {
+            s.reasoningSentLen = s.reasoningBuf.length;
+            return [{
+              type: 'state_update',
+              data: { phase: 'running', step: 'AI 思考完成', detail: s.reasoningBuf.slice(-500) },
+            }];
           }
           return [];
         }
-        case 'block-end':
+
         case 'usage':
         case 'finish':
           return [];
+
         default:
           return [];
       }
     }
 
+    // ─── 完整 assistant 消息（去重：如果 text-delta 已发过则跳过）───
     case 'assistant/message': {
       const text = d.content?.map((c: any) => c?.text || '').join('') || d.text || '';
-      return [{ type: 'message', data: { text, start: false } }];
-    }
+      if (!text) return [];
 
-    case 'tool/call': {
-      if (d.callId && d.name && callIdToName) {
-        callIdToName.set(d.callId, d.name);
+      // 如果 text-delta 已经流式发送了相同内容，只发 start:false 标记
+      if (s.textStarted) {
+        return [{ type: 'message', data: { text: '', start: false } }];
       }
-      return [{ type: 'state_update', data: { step: '工具调用', detail: `正在调用 ${d.name || '工具'}` } }];
+      // 否则发完整文本（兜底）
+      s.textStarted = true;
+      return [
+        { type: 'message', data: { text: '', start: true } },
+        { type: 'message', data: { text } },
+        { type: 'message', data: { text: '', start: false } },
+      ];
     }
 
+    // ─── 工具调用（每个工具只发一次 state_update）───
+    case 'tool/call': {
+      if (d.callId && d.name) {
+        s.callIdToName.set(d.callId, d.name);
+      }
+      const toolName = d.name || '工具';
+      const callKey = d.callId || toolName;
+      if (!s.announcedTools.has(callKey)) {
+        s.announcedTools.add(callKey);
+        return [{ type: 'state_update', data: { phase: 'running', step: '工具调用', detail: `正在调用 ${toolName}` } }];
+      }
+      return [];
+    }
+
+    // ─── 工具结果 ───
     case 'tool/result': {
       const msg = d.message || {};
       const source = msg.source || {};
       const callId = source.callId || msg.tool_call_id || '';
-      const toolName = (callId && callIdToName?.get(callId)) || 'unknown';
+      const toolName = (callId && s.callIdToName.get(callId)) || 'unknown';
 
       let fullText = '';
       let isError = false;
@@ -216,19 +306,17 @@ function mapSessionEvent(event: any, callIdToName?: Map<string, string>): { type
 
       // 解析 __ARTIFACTS__ 标记块
       let observation = fullText;
-      const artifactMarker = fullText.match(/__ARTIFACTS__([\s\S]*?)__END_ARTIFACTS__/);
-      if (artifactMarker) {
+      const marker = fullText.match(/__ARTIFACTS__([\s\S]*?)__END_ARTIFACTS__/);
+      if (marker) {
         observation = fullText.replace(/__ARTIFACTS__[\s\S]*?__END_ARTIFACTS__/, '').trim();
         try {
-          const artifacts = JSON.parse(artifactMarker[1]);
+          const artifacts = JSON.parse(marker[1]);
           if (Array.isArray(artifacts)) {
             for (const art of artifacts) {
               events.push({ type: 'artifact_update', data: { artifact: art } });
             }
           }
-        } catch (e) {
-          // JSON 解析失败，忽略
-        }
+        } catch (e) { /* ignore */ }
       }
 
       events.push({

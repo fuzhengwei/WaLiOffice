@@ -132,7 +132,7 @@ async fn dsh_chat_stream(
     user: AuthUser,
     Json(req): Json<DshChatRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
-    let _pool = state::db_pool();
+    let pool = state::db_pool();
 
     // 检查 DSH 是否可用
     if !is_dsh_available().await {
@@ -141,11 +141,26 @@ async fn dsh_chat_stream(
         )));
     }
 
+    // 获取或创建 session
+    let session_id = req.session_id.clone().unwrap_or_else(|| {
+        uuid::Uuid::new_v4().to_string()
+    });
+    let user_id = user.0.id.clone();
+
+    // 保存用户消息到 DB
+    let user_msg = crate::models::ChatMessage {
+        role: "user".into(),
+        content: req.message.clone(),
+        tool_calls: None,
+        tool_call_id: None,
+    };
+    let _ = crate::db::session_repo::add_message(&pool, &session_id, &user_msg);
+
     // 构建发送给 DSH 的请求体
     let dsh_body = serde_json::json!({
         "message": req.message,
-        "session_id": req.session_id,
-        "user_id": user.0.id,
+        "session_id": session_id,
+        "user_id": user_id,
         "model": req.model,
         "tool_kind": req.tool_kind,
         "attachments": req.attachments,
@@ -174,11 +189,18 @@ async fn dsh_chat_stream(
     // 将 DSH 的 SSE 流转换为 axum SSE 流
     let (sse_tx, sse_rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(256);
 
+    // 克隆用于保存的变量
+    let pool_for_save = pool.clone();
+    let session_id_for_save = session_id.clone();
+    let user_id_for_save = user_id.clone();
+
     tokio::spawn(async move {
         use futures::StreamExt;
 
         let mut stream = dsh_response.bytes_stream();
         let mut buffer = String::new();
+        let mut assistant_text = String::new();
+        let mut collected_artifacts: Vec<crate::models::Artifact> = Vec::new();
 
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
@@ -191,6 +213,33 @@ async fn dsh_chat_stream(
                         buffer = buffer[event_end + 2..].to_string();
 
                         if let Some(sse_event) = parse_dsh_sse_event(&event_text) {
+                            // 收集 assistant 文本和 artifacts（从原始 event_text 解析）
+                            let mut ev_type = "message";
+                            let mut ev_data = "";
+                            for line in event_text.lines() {
+                                if let Some(v) = line.strip_prefix("event:") {
+                                    ev_type = v.trim();
+                                } else if let Some(v) = line.strip_prefix("data:") {
+                                    ev_data = v.trim();
+                                }
+                            }
+                            if ev_type == "message" {
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(ev_data) {
+                                    if let Some(text) = json.get("text").and_then(|v| v.as_str()) {
+                                        if !text.is_empty() {
+                                            assistant_text.push_str(text);
+                                        }
+                                    }
+                                }
+                            } else if ev_type == "artifact_update" {
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(ev_data) {
+                                    if let Some(art) = json.get("artifact") {
+                                        if let Ok(artifact) = serde_json::from_value::<crate::models::Artifact>(art.clone()) {
+                                            collected_artifacts.push(artifact);
+                                        }
+                                    }
+                                }
+                            }
                             let _ = sse_tx.send(Ok(sse_event)).await;
                         }
                     }
@@ -206,8 +255,32 @@ async fn dsh_chat_stream(
             }
         }
 
-        // 确保流结束
-        let _ = sse_tx.send(Ok(Event::default().event("done").data("{}"))).await;
+        // 流结束后保存 assistant 消息到 DB
+        if !assistant_text.is_empty() {
+            let assistant_msg = crate::models::ChatMessage {
+                role: "assistant".into(),
+                content: assistant_text.clone(),
+                tool_calls: None,
+                tool_call_id: None,
+            };
+            let _ = crate::db::session_repo::add_message(&pool_for_save, &session_id_for_save, &assistant_msg);
+            let summary: String = assistant_text.chars().take(240).collect();
+            let _ = crate::db::session_repo::update_summary(&pool_for_save, &session_id_for_save, &summary);
+        }
+
+        // 保存 artifacts
+        for artifact in &collected_artifacts {
+            crate::routes::chat::save_generated_artifact_to_files(
+                &pool_for_save,
+                &user_id_for_save,
+                artifact,
+            ).await;
+        }
+        if !collected_artifacts.is_empty() {
+            let _ = crate::db::session_repo::save_artifacts(&pool_for_save, &session_id_for_save, &collected_artifacts);
+        }
+
+        // DSH 自己会发 done 事件，不需要额外添加
     });
 
     let stream = ReceiverStream::new(sse_rx);
