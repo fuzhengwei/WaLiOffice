@@ -1219,6 +1219,14 @@ export default function Studio() {
                     ...msgs[msgs.length - 1],
                     content: assistantText,
                   }
+                  // 同时更新当前 tab 的 messages，防止 done 事件中 syncFromTab 用旧 tab 数据覆盖全局
+                  const tabId = state.activeTabId
+                  if (tabId && state.tabs[tabId]) {
+                    return {
+                      messages: msgs,
+                      tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], messages: msgs } },
+                    }
+                  }
                   return { messages: msgs }
                 })
               }
@@ -1388,6 +1396,13 @@ export default function Studio() {
                   ...msgs[msgs.length - 1],
                   content: `抱歉，生成失败：${data.message || data.detail || '请稍后重试'}`,
                 }
+                const tabId = state.activeTabId
+                if (tabId && state.tabs[tabId]) {
+                  return {
+                    messages: msgs,
+                    tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], messages: msgs } },
+                  }
+                }
                 return { messages: msgs }
               })
               break
@@ -1416,6 +1431,13 @@ export default function Studio() {
             : errorMessage === '未认证'
             ? '登录状态已失效，请重新登录后再试。'
             : `抱歉，发生了错误：${errorMessage}`,
+        }
+        const tabId = state.activeTabId
+        if (tabId && state.tabs[tabId]) {
+          return {
+            messages: msgs,
+            tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], messages: msgs } },
+          }
         }
         return { messages: msgs }
       })
