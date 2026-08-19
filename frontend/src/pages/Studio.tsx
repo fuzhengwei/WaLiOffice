@@ -981,10 +981,22 @@ export default function Studio() {
       return
     }
 
-    // 视频类型：加入附件（保持原有逻辑）
+    // 视频类型：走 InputRef chip 标签路径（与其他产物类型一致）
     if (artifact.kind === 'video' && artifact.content?.video_url) {
       const refText = `[视频：${artifact.title || '未命名'}](${artifact.content.video_url})`
-      setInput((current) => (current.trim() ? `${current}\n\n${refText}` : refText))
+      const newRef: InputRef = {
+        id: `ref-${artifact.id}-${Date.now()}`,
+        artifactId: artifact.id,
+        kind: artifact.kind,
+        title: artifact.title || '未命名',
+        refText,
+        sessionId: fromSessionId,
+        contentSummary: extractArtifactSummary(artifact),
+      }
+      setInputRefs((current) => {
+        if (current.some((ref) => ref.artifactId === artifact.id)) return current
+        return [...current, newRef]
+      })
       return
     }
 
@@ -1155,10 +1167,13 @@ export default function Studio() {
 
     addMessage({
       role: 'user',
-      content: message,
+      content: baseMessage,
       timestamp: new Date().toISOString(),
       attachments: pendingAttachments,
+      inputRefs: inputRefs.length > 0 ? inputRefs : undefined,
     })
+
+    // 发给后端的消息仍包含完整引用上下文
 
     const token = useAuthStore.getState().token
     if (!token) {

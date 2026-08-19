@@ -333,6 +333,7 @@ export function ChatPanel({
   const [showFilePicker, setShowFilePicker] = useState(false)
   const [artifactPickerScope, setArtifactPickerScope] = useState<Artifact[]>(artifacts)
   const previousArtifactsLengthRef = useRef(artifacts.length)
+
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
@@ -402,6 +403,18 @@ export function ChatPanel({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean }
+    // FilePickerPanel 打开时，textarea 不响应快捷键（由面板全局监听接管）
+    if (showFilePicker) {
+      // Enter 仍然需要阻止发送
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+      }
+      // 上下键阻止默认行为（避免 textarea 光标移动）
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+      }
+      return
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       if (nativeEvent.isComposing || e.currentTarget.dataset.composing === 'true') return
       e.preventDefault()
@@ -440,7 +453,7 @@ export function ChatPanel({
     onInputChange(e.target.value)
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 196)}px`
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 140)}px`
     }
   }
 
@@ -647,6 +660,25 @@ export function ChatPanel({
                     {streamStatus || '正在处理...'}
                   </span>
                 ) : '')}
+                {msg.inputRefs && msg.inputRefs.length > 0 && (
+                  <div className={`mt-2 flex flex-wrap gap-1.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {msg.inputRefs.map((refItem) => {
+                      const Icon = refIconMap[refItem.kind] || Bot
+                      const colorClass = msg.role === 'user'
+                        ? 'bg-white/10 text-white ring-white/20'
+                        : (refColorMap[refItem.kind] || refColorMap.mixed)
+                      return (
+                        <div
+                          key={refItem.id}
+                          className={`group inline-flex max-w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium ring-1 ${colorClass}`}
+                        >
+                          <Icon className="h-3.5 w-3.5 shrink-0" />
+                          <span className="max-w-[160px] truncate">{refItem.title}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
                 {msg.attachments && msg.attachments.length > 0 && (
                   <div className={`mt-3 flex flex-wrap gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     {msg.attachments.map((attachment) => (
@@ -732,49 +764,49 @@ export function ChatPanel({
         </div>
       </div>
 
-      <div className="relative z-20 shrink-0 bg-[#f6f4ef]/88 px-5 pb-4 pt-3 backdrop-blur-xl">
+      <div className="relative z-20 shrink-0 bg-[#f6f4ef]/88 px-5 pb-3 pt-2 backdrop-blur-xl">
         <div className="mx-auto w-full max-w-3xl">
           {artifacts.length > 0 && (
-            <div className="mb-3 overflow-hidden rounded-[1.75rem] border border-white/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(249,247,240,0.88))] shadow-[0_18px_54px_rgba(24,24,27,0.12)] backdrop-blur-2xl ring-1 ring-black/[0.035]">
+            <div className="mb-2 overflow-hidden rounded-2xl border border-white/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(249,247,240,0.88))] shadow-[0_8px_28px_rgba(24,24,27,0.08)] backdrop-blur-xl ring-1 ring-black/[0.03]">
               <button
                 type="button"
                 onClick={() => setArtifactSummaryExpanded((expanded) => !expanded)}
-                className="relative flex w-full items-center justify-between gap-3 overflow-hidden px-4 py-3.5 text-left transition-colors hover:bg-white/55"
+                className="relative flex w-full items-center justify-between gap-2 overflow-hidden px-3 py-2 text-left transition-colors hover:bg-white/55"
                 aria-expanded={artifactSummaryExpanded}
               >
-                <span className="pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-[radial-gradient(circle_at_20%_30%,rgba(59,130,246,0.10),transparent_46%)]" />
-                <div className="relative flex min-w-0 items-center gap-3">
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[1.2rem] bg-surface-950 text-white shadow-[0_12px_28px_rgba(24,24,27,0.22)] ring-1 ring-white/20">
-                    <Files className="h-5 w-5" />
+                <span className="pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-[radial-gradient(circle_at_20%_30%,rgba(59,130,246,0.06),transparent_46%)]" />
+                <div className="relative flex min-w-0 items-center gap-2">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-950 text-white shadow-sm">
+                    <Files className="h-3.5 w-3.5" />
                   </span>
                   <span className="min-w-0">
-                    <span className="flex items-center gap-2 text-sm font-bold text-surface-950">
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-surface-950">
                       产物汇总
-                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-100">实时同步</span>
+                      <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 ring-1 ring-emerald-100">实时</span>
                     </span>
-                    <span className="mt-0.5 block truncate text-xs text-surface-500">生成结果集中在这里，可随时展开回看、预览和下载。</span>
+                    <span className="mt-0.5 block truncate text-[10px] text-surface-400">点击展开查看、预览和下载</span>
                   </span>
                 </div>
-                <div className="relative flex shrink-0 items-center gap-2">
-                  <span className="rounded-full bg-white/82 px-3 py-1.5 text-[11px] font-bold text-surface-700 shadow-sm ring-1 ring-black/[0.05]">
+                <div className="relative flex shrink-0 items-center gap-1.5">
+                  <span className="rounded-full bg-white/82 px-2 py-1 text-[10px] font-bold text-surface-700 shadow-sm ring-1 ring-black/[0.05]">
                     {artifacts.length} 个 · {artifactTurnGroups.length} 轮
                   </span>
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/75 text-surface-400 shadow-sm ring-1 ring-black/[0.05]">
-                    <ChevronDown className={`h-4 w-4 transition-transform ${artifactSummaryExpanded ? 'rotate-180' : ''}`} />
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/75 text-surface-400 shadow-sm ring-1 ring-black/[0.05]">
+                    <ChevronDown className={`h-3 w-3 transition-transform ${artifactSummaryExpanded ? 'rotate-180' : ''}`} />
                   </span>
                 </div>
               </button>
 
               {artifactSummaryExpanded && (
-                <div className="max-h-[292px] space-y-2.5 overflow-y-auto border-t border-white/70 bg-white/30 p-3 [scrollbar-gutter:stable]">
+                <div className="max-h-[220px] space-y-2 overflow-y-auto border-t border-white/70 bg-white/30 p-2 [scrollbar-gutter:stable]">
                   {artifactTurnGroups.map((group) => {
                     const expanded = expandedTurnKeys.includes(group.key)
                     return (
-                      <div key={group.key} className="overflow-hidden rounded-[1.35rem] border border-white/75 bg-[#fffdfa]/86 shadow-[0_10px_28px_rgba(24,24,27,0.06)] ring-1 ring-black/[0.025]">
+                      <div key={group.key} className="overflow-hidden rounded-xl border border-white/75 bg-[#fffdfa]/86 shadow-sm ring-1 ring-black/[0.02]">
                         <button
                           type="button"
                           onClick={() => setExpandedTurnKeys((current) => current.includes(group.key) ? current.filter((key) => key !== group.key) : [...current, group.key])}
-                          className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-white/75"
+                          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-white/75"
                         >
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
@@ -793,7 +825,7 @@ export function ChatPanel({
                         </button>
 
                         {expanded && (
-                          <div className="border-t border-black/[0.04] bg-white/42 px-3.5 py-3">
+                          <div className="border-t border-black/[0.04] bg-white/42 px-3 py-2">
                             <div className="flex gap-2 overflow-x-auto pb-1.5">
                               {group.artifacts.map((artifact) => {
                                 const meta = artifactMeta[artifact.kind] || artifactMeta.mixed
@@ -802,7 +834,7 @@ export function ChatPanel({
                                 return (
                                   <div
                                     key={artifact.id}
-                                    className={`group relative inline-flex min-w-[220px] shrink-0 items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-xs transition-all ${
+                                    className={`group relative inline-flex min-w-[180px] shrink-0 items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs transition-all ${
                                       isActive
                                         ? 'border-surface-900 bg-surface-950 text-white shadow-[0_12px_26px_rgba(24,24,27,0.20)]'
                                         : 'border-black/[0.06] bg-white/92 text-surface-600 shadow-sm hover:-translate-y-0.5 hover:bg-white hover:text-surface-900 hover:shadow-md'
@@ -813,7 +845,7 @@ export function ChatPanel({
                                       onClick={() => onOpenArtifact(artifact.id)}
                                       className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
                                     >
-                                      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${isActive ? 'bg-white/12 text-white' : 'bg-surface-50 text-surface-700 ring-1 ring-black/[0.05]'}`}>
+                                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${isActive ? 'bg-white/12 text-white' : 'bg-surface-50 text-surface-700 ring-1 ring-black/[0.05]'}`}>
                                         <ArtifactIcon className="h-4 w-4" />
                                       </span>
                                       <span className="min-w-0 flex-1 text-left">
@@ -842,7 +874,7 @@ export function ChatPanel({
                   })}
 
                   {selectedArtifact && (
-                    <div className="rounded-[1.35rem] border border-white/75 bg-white/88 p-3.5 shadow-[0_12px_30px_rgba(24,24,27,0.07)] ring-1 ring-black/[0.025]">
+                    <div className="rounded-xl border border-white/75 bg-white/88 p-2.5 shadow-sm ring-1 ring-black/[0.02]">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
@@ -876,11 +908,11 @@ export function ChatPanel({
               )}
             </div>
           )}
-          <div className={`rounded-[2rem] border bg-white/90 p-2.5 shadow-[0_14px_36px_rgba(24,24,27,0.09)] backdrop-blur-xl transition-all ${
-            isStreaming ? 'border-surface-300 ring-4 ring-white/55' : 'border-black/10 focus-within:border-surface-500 focus-within:ring-4 focus-within:ring-white/70'
+          <div className={`rounded-[1.6rem] border bg-white/90 p-2 shadow-[0_8px_28px_rgba(24,24,27,0.07)] backdrop-blur-xl transition-all ${
+            isStreaming ? 'border-surface-300 ring-2 ring-white/55' : 'border-black/10 focus-within:border-surface-500 focus-within:ring-2 focus-within:ring-white/70'
           }`}>
             {attachments.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-2 px-1">
+              <div className="mb-1.5 flex flex-wrap gap-2 px-1">
                 {attachments.map((attachment) => (
                   <AttachmentPreview
                     key={attachment.id}
@@ -891,7 +923,7 @@ export function ChatPanel({
               </div>
             )}
             {inputRefs.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-1.5 px-1">
+              <div className="mb-1.5 flex flex-wrap gap-1.5 px-1">
                 {inputRefs.map((refItem) => (
                   <InputRefChip
                     key={refItem.id}
@@ -901,7 +933,7 @@ export function ChatPanel({
                 ))}
               </div>
             )}
-            <div className="relative rounded-[1.55rem] border border-black/[0.05] bg-[#fcfbf8]/96 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+            <div className="relative rounded-[1.3rem] border border-black/[0.05] bg-[#fcfbf8]/96 px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
               {showFilePicker && !isStreaming && (
                 <FilePickerPanel
                   artifacts={artifactPickerScope}
@@ -910,9 +942,9 @@ export function ChatPanel({
                   onClose={() => setShowFilePicker(false)}
                 />
               )}
-              <div className="min-h-[90px]">
+              <div className="min-h-[52px]">
                 {isStreaming ? (
-                  <div className="flex min-h-[72px] items-start text-[15px] leading-[1.7] text-surface-400">
+                  <div className="flex min-h-[44px] items-start text-[14px] leading-[1.6] text-surface-400">
                     <span>{tool.promptPlaceholder}</span>
                   </div>
                 ) : (
@@ -925,7 +957,7 @@ export function ChatPanel({
                     onCompositionEnd={handleCompositionEnd}
                     placeholder={inputPlaceholder}
                     rows={2}
-                    className="min-h-[72px] max-h-[180px] w-full resize-none border-0 bg-transparent p-0 text-[15px] leading-[1.7] text-surface-900 outline-none placeholder:text-surface-400"
+                    className="min-h-[44px] max-h-[140px] w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-[1.6] text-surface-900 outline-none placeholder:text-surface-400"
                   />
                 )}
               </div>
@@ -1029,7 +1061,7 @@ export function ChatPanel({
                 </div>
               </div>
             </div>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-[1.45rem] border border-black/[0.05] bg-[#f8f5ee]/86 px-2 py-2 backdrop-blur-sm">
+            <div className="mt-1.5 flex flex-wrap items-center gap-1 rounded-[1.2rem] border border-black/[0.05] bg-[#f8f5ee]/86 px-2 py-1.5 backdrop-blur-sm">
             {AGENT_TOOLS.map((item) => (
               <button
                 key={item.id}

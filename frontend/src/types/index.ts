@@ -214,6 +214,8 @@ export interface ChatMessage {
   action?: string;
   slide_id?: string;
   attachments?: ChatAttachment[];
+  /** 用户消息引用的产物标签 */
+  inputRefs?: InputRef[];
 }
 
 // ===== 用户 =====

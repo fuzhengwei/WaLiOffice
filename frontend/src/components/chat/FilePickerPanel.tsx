@@ -54,6 +54,7 @@ export function FilePickerPanel({ artifacts, historyArtifacts, onSelect, onClose
   const [activeTab, setActiveTab] = useState<PickerTab>('current')
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   // 当前会话没有产物但历史有 → 自动切到历史 tab
   useEffect(() => {
@@ -124,6 +125,47 @@ export function FilePickerPanel({ artifacts, historyArtifacts, onSelect, onClose
     inputRef.current?.focus()
   }, [])
 
+  // 点击外部关闭
+  useEffect(() => {
+    const handleMouseDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    // 用 mousedown 且 capture 阶段，确保在 click 之前拦截
+    document.addEventListener('mousedown', handleMouseDown, true)
+    return () => document.removeEventListener('mousedown', handleMouseDown, true)
+  }, [onClose])
+
+  // 全局键盘导航（不依赖 search input 焦点）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSelectedIndex((i) => Math.min(i + 1, flatList.length - 1))
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSelectedIndex((i) => Math.max(i - 1, 0))
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        const item = flatList[selectedIndex]
+        if (item) onSelect(item.artifact, item.sessionId)
+      } else if (e.key === 'Tab') {
+        e.preventDefault()
+        if (activeTab === 'current' && historyList.length > 0) {
+          setActiveTab('history')
+        } else if (activeTab === 'history' && currentList.length > 0) {
+          setActiveTab('current')
+        }
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [flatList, selectedIndex, activeTab, historyList.length, currentList.length, onClose, onSelect])
+
   useEffect(() => {
     setSelectedIndex(0)
   }, [query, activeTab])
@@ -133,31 +175,6 @@ export function FilePickerPanel({ artifacts, historyArtifacts, onSelect, onClose
     const el = listRef.current?.querySelector(`[data-idx="${selectedIndex}"]`)
     el?.scrollIntoView({ block: 'nearest' })
   }, [selectedIndex])
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      onClose()
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setSelectedIndex((i) => Math.min(i + 1, flatList.length - 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setSelectedIndex((i) => Math.max(i - 1, 0))
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      const item = flatList[selectedIndex]
-      if (item) onSelect(item.artifact, item.sessionId)
-    } else if (e.key === 'Tab') {
-      e.preventDefault()
-      // Tab 切换 current/history
-      if (activeTab === 'current' && historyList.length > 0) {
-        setActiveTab('history')
-      } else if (activeTab === 'history' && currentList.length > 0) {
-        setActiveTab('current')
-      }
-    }
-  }
 
   const handleItemClick = useCallback((artifact: Artifact, sessionId?: string) => {
     onSelect(artifact, sessionId)
@@ -169,7 +186,7 @@ export function FilePickerPanel({ artifacts, historyArtifacts, onSelect, onClose
 
   if (isEmpty) {
     return (
-      <div className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.12)]">
+      <div ref={containerRef} className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.12)]">
         <div className="border-b border-surface-100 px-3 py-2">
           <div className="flex items-center gap-2 text-xs text-surface-400">
             <Search className="h-3.5 w-3.5" />
@@ -186,7 +203,7 @@ export function FilePickerPanel({ artifacts, historyArtifacts, onSelect, onClose
   let runningIdx = -1
 
   return (
-    <div className="absolute bottom-full left-0 right-0 z-50 mb-2 flex max-h-[360px] flex-col overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.12)]">
+    <div ref={containerRef} className="absolute bottom-full left-0 right-0 z-50 mb-2 flex max-h-[360px] flex-col overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.12)]">
       {/* 搜索栏 + Tab 切换 */}
       <div className="border-b border-surface-100 px-3 py-2">
         <div className="flex items-center gap-2">
@@ -195,7 +212,6 @@ export function FilePickerPanel({ artifacts, historyArtifacts, onSelect, onClose
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
             placeholder="搜索产物…"
             className="w-full border-0 bg-transparent p-0 text-xs text-surface-800 outline-none placeholder:text-surface-300"
           />
