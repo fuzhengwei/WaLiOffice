@@ -9,8 +9,9 @@ import { SlidePreview } from '@/components/preview/SlidePreview'
 import { ConversationSidebar } from '@/components/history/ConversationSidebar'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
-import { AlertCircle, CheckCircle2, Info, Play, X, PanelRightClose, PanelRight } from 'lucide-react'
-import type { AppSettings, Artifact, ChatAttachment, ConversationRecord, LLMProfile, PersistedSession, ProjectMeta, ToolKind, ToolConfigMap } from '@/types'
+import { AlertCircle, CheckCircle2, Info, Play, X, PanelRightClose, PanelRight, Files } from 'lucide-react'
+import type { AppSettings, Artifact, ChatAttachment, ConversationRecord, InputRef, LLMProfile, PersistedSession, ProjectMeta, ToolKind, ToolConfigMap } from '@/types'
+import { extractArtifactSummary } from '@/lib/artifact-summary'
 const LOGO_URL = '/logo.png'
 
 type ToastTone = 'success' | 'error' | 'info'
@@ -161,6 +162,7 @@ export default function Studio() {
     setProject, setSlides, setCurrentSlide,
     addMessage, setStreaming, setSessionId, reset,
     upsertArtifact, updateArtifact, setActiveArtifact,
+    activeTabId, tabs, openTab, closeTab, switchTab, updateTab, restoreState,
   } = usePPTStore()
 
   const [showArtifactPanel, setShowArtifactPanel] = useState(false)
@@ -180,9 +182,16 @@ export default function Studio() {
   const [streamPhase, setStreamPhase] = useState<'idle' | 'thinking' | 'generating' | 'finishing' | 'done' | 'error'>('idle')
   const [processLogs, setProcessLogs] = useState<string[]>([])
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  const [inputRefs, setInputRefs] = useState<InputRef[]>([])
+  /** 历史会话产物列表（供 @ 引用） */
+  const [historyArtifacts, setHistoryArtifacts] = useState<{ artifact: Artifact; sessionTitle: string; sessionId: string }[]>([])
+  const [historyArtifactsLoading, setHistoryArtifactsLoading] = useState(false)
   const [toolConfig, setToolConfig] = useState<ToolConfigMap>({})
   const [sidebarWidth, setSidebarWidth] = useState(getStoredSidebarWidth)
   const [toast, setToast] = useState<ToastState | null>(null)
+  // 每个 tab 的本地 UI 状态（与 store 中的对话状态分离）
+  const [tabUiState, setTabUiState] = useState<Record<string, { input: string; attachments: ChatAttachment[]; inputRefs: InputRef[]; streamStatus: string; streamPhase: typeof streamPhase; processLogs: string[]; activeTool: ToolKind; activeProjectId: string | null; selectedTheme: string; toolConfig: ToolConfigMap; showArtifactPanel: boolean; pptProgress: { current: number; total: number } | null; followLatestSlide: boolean }>>({})
+  const tabCounterRef = useRef(0)
 
   // 设置 & 模型
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -279,15 +288,73 @@ export default function Studio() {
   }
 
   useEffect(() => {
+    // 初始化第一个 tab
+    tabCounterRef.current += 1
+    const firstTabId = `tab-${Date.now()}`
+    openTab(firstTabId)
+    setTabUiState((prev) => ({
+      ...prev,
+      [firstTabId]: { input: '', attachments: [], inputRefs: [], streamStatus: '空闲', streamPhase: 'idle', processLogs: [], activeTool: 'general', activeProjectId: null, selectedTheme: 'default', toolConfig: {}, showArtifactPanel: false, pptProgress: null, followLatestSlide: true },
+    }))
+
     loadSettings()
     refreshProjects()
     refreshConversations('')
+    loadHistoryArtifacts()
     // 从 URL 恢复会话
     const restoreSessionId = searchParams.get('s')
     if (restoreSessionId) {
       handleSelectConversation(restoreSessionId)
     }
   }, [])
+
+  /** 加载历史会话产物供 @ 引用 */
+  const loadHistoryArtifacts = async () => {
+    try {
+      setHistoryArtifactsLoading(true)
+      // 获取最近的会话列表
+      const res = await sessionApi.listSessions({ page_size: 20 })
+      const sessions = (res.data as any)?.sessions || []
+      const currentSid = sessionId
+      const items: { artifact: Artifact; sessionTitle: string; sessionId: string }[] = []
+      // 从每个历史会话中提取产物（排除当前会话）
+      for (const session of sessions) {
+        if (session.id === currentSid) continue
+        if (session.artifacts && Array.isArray(session.artifacts)) {
+          for (const artifact of session.artifacts) {
+            items.push({
+              artifact,
+              sessionTitle: session.title || '未命名会话',
+              sessionId: session.id,
+            })
+          }
+        } else {
+          // 如果会话列表没带产物详情，尝试加载会话详情
+          try {
+            const detail = await sessionApi.getSession(session.id)
+            const detailData = detail.data as any
+            const sessionArtifacts = detailData?.artifacts || []
+            for (const artifact of sessionArtifacts) {
+              items.push({
+                artifact,
+                sessionTitle: session.title || '未命名会话',
+                sessionId: session.id,
+              })
+            }
+          } catch {
+            // skip failed sessions
+          }
+        }
+        // 限制最多加载 50 个历史产物
+        if (items.length >= 50) break
+      }
+      setHistoryArtifacts(items)
+    } catch (err) {
+      console.warn('[historyArtifacts] 加载历史产物失败:', err)
+    } finally {
+      setHistoryArtifactsLoading(false)
+    }
+  }
 
   // sessionId 变化时同步到 URL
   useEffect(() => {
@@ -310,6 +377,161 @@ export default function Studio() {
   const handleToolChange = (tool: ToolKind) => {
     setActiveTool(tool)
   }
+
+  // ====== 多 Tab 管理 ======
+
+  const getCurrentTabUi = () => {
+    if (!activeTabId) return null
+    return tabUiState[activeTabId] || null
+  }
+
+  const updateTabUi = (updates: Partial<NonNullable<ReturnType<typeof getCurrentTabUi>>>) => {
+    if (!activeTabId) return
+    setTabUiState((prev) => {
+      const current = prev[activeTabId] || { input: '', attachments: [], streamStatus: '空闲', streamPhase: 'idle' as const, processLogs: [], activeTool: 'general' as ToolKind, activeProjectId: null, selectedTheme: 'default', toolConfig: {}, showArtifactPanel: false, pptProgress: null, followLatestSlide: true }
+      return { ...prev, [activeTabId]: { ...current, ...updates } }
+    })
+  }
+
+  const handleNewTab = () => {
+    // 保存当前 tab 的本地状态
+    if (activeTabId) {
+      setTabUiState((prev) => {
+        const current = prev[activeTabId] || {}
+        return { ...prev, [activeTabId]: { ...current, input, attachments, inputRefs, streamStatus, streamPhase, processLogs, activeTool, activeProjectId, selectedTheme, toolConfig, showArtifactPanel, pptProgress, followLatestSlide } }
+      })
+      updateTab(activeTabId, { input, activeTool, activeProjectId, selectedTheme, toolConfig, streamStatus, streamPhase, processLogs, attachments })
+    }
+
+    // 创建新 tab
+    tabCounterRef.current += 1
+    const newTabId = `tab-${Date.now()}-${tabCounterRef.current}`
+    openTab(newTabId)
+    setTabUiState((prev) => ({
+      ...prev,
+      [newTabId]: { input: '', attachments: [], inputRefs: [], streamStatus: '空闲', streamPhase: 'idle', processLogs: [], activeTool: 'general', activeProjectId: null, selectedTheme: selectedTheme, toolConfig: {}, showArtifactPanel: false, pptProgress: null, followLatestSlide: true },
+    }))
+
+    // 重置本地 UI 状态
+    setInput('')
+    setAttachments([])
+    setInputRefs([])
+    setActiveTool('general')
+    setActiveProjectId(null)
+    setStreamStatus('空闲')
+    setStreamPhase('idle')
+    setProcessLogs([])
+    setToolConfig({})
+    setShowArtifactPanel(false)
+    setPptProgress(null)
+    setFollowLatestSlide(true)
+    setSearchParams({}, { replace: true })
+  }
+
+  const handleCloseTab = (tabId: string) => {
+    // 如果关闭的是活跃 tab，先保存状态
+    if (tabId === activeTabId) {
+      setTabUiState((prev) => {
+        const current = prev[tabId] || {}
+        return { ...prev, [tabId]: { ...current, input, attachments, inputRefs, streamStatus, streamPhase, processLogs, activeTool, activeProjectId, selectedTheme, toolConfig, showArtifactPanel, pptProgress, followLatestSlide } }
+      })
+    }
+
+    // 如果 tab 正在 streaming，中止
+    const tab = tabs[tabId]
+    if (tab?.isStreaming) {
+      // abortRef 在当前作用域只能控制活跃 tab，后台 tab 的 abort 需要额外管理
+      // 简化方案：如果关闭的不是活跃 tab 且正在 streaming，让它后台完成
+    }
+
+    closeTab(tabId)
+    setTabUiState((prev) => {
+      const next = { ...prev }
+      delete next[tabId]
+      return next
+    })
+
+    // 如果关闭的是活跃 tab，恢复到下一个 tab 的状态
+    if (tabId === activeTabId) {
+      const remainingIds = Object.keys(tabs).filter((id) => id !== tabId)
+      if (remainingIds.length > 0) {
+        const nextId = remainingIds[remainingIds.length - 1]
+        switchTab(nextId)
+        const nextUi = tabUiState[nextId]
+        if (nextUi) {
+          setInput(nextUi.input || '')
+          setAttachments(nextUi.attachments || [])
+          setInputRefs(nextUi.inputRefs || [])
+          setActiveTool(nextUi.activeTool || 'general')
+          setActiveProjectId(nextUi.activeProjectId || null)
+          setSelectedTheme(nextUi.selectedTheme || 'default')
+          setToolConfig(nextUi.toolConfig || {})
+          setStreamStatus(nextUi.streamStatus || '空闲')
+          setStreamPhase(nextUi.streamPhase || 'idle')
+          setProcessLogs(nextUi.processLogs || [])
+          setShowArtifactPanel(nextUi.showArtifactPanel || false)
+          setPptProgress(nextUi.pptProgress || null)
+          setFollowLatestSlide(nextUi.followLatestSlide ?? true)
+        }
+        const nextTab = tabs[nextId]
+        if (nextTab) {
+          setSearchParams(nextTab.sessionId ? { s: nextTab.sessionId } : {}, { replace: true })
+        }
+      }
+    }
+  }
+
+  const handleSelectTab = (tabId: string) => {
+    if (tabId === activeTabId) return
+
+    // 保存当前 tab 的本地 UI 状态
+    if (activeTabId) {
+      setTabUiState((prev) => {
+        const current = prev[activeTabId] || {}
+        return { ...prev, [activeTabId]: { ...current, input, attachments, inputRefs, streamStatus, streamPhase, processLogs, activeTool, activeProjectId, selectedTheme, toolConfig, showArtifactPanel, pptProgress, followLatestSlide } }
+      })
+      updateTab(activeTabId, { input, activeTool, activeProjectId, selectedTheme, toolConfig, streamStatus, streamPhase, processLogs, attachments })
+    }
+
+    // 切换到目标 tab
+    switchTab(tabId)
+
+    // 恢复目标 tab 的本地 UI 状态
+    const targetUi = tabUiState[tabId]
+    if (targetUi) {
+      setInput(targetUi.input || '')
+      setAttachments(targetUi.attachments || [])
+      setInputRefs(targetUi.inputRefs || [])
+      setActiveTool(targetUi.activeTool || 'general')
+      setActiveProjectId(targetUi.activeProjectId || null)
+      setSelectedTheme(targetUi.selectedTheme || 'default')
+      setToolConfig(targetUi.toolConfig || {})
+      setStreamStatus(targetUi.streamStatus || '空闲')
+      setStreamPhase(targetUi.streamPhase || 'idle')
+      setProcessLogs(targetUi.processLogs || [])
+      setShowArtifactPanel(targetUi.showArtifactPanel || false)
+      setPptProgress(targetUi.pptProgress || null)
+      setFollowLatestSlide(targetUi.followLatestSlide ?? true)
+    }
+
+    // 同步 URL
+    const targetTab = tabs[tabId]
+    if (targetTab) {
+      setSearchParams(targetTab.sessionId ? { s: targetTab.sessionId } : {}, { replace: true })
+    }
+  }
+
+  // 构建传给侧边栏的 tabs 数据
+  const conversationTabs = Object.values(tabs).map((tab) => ({
+    id: tab.tabId,
+    title: tab.tabTitle || (tab.messages.length > 0 ? (tab.messages.find((m) => m.role === 'user')?.content || '新对话').slice(0, 20) : '新对话'),
+    tool: tab.activeTool || 'general',
+    isStreaming: tab.isStreaming,
+    streamPhase: tab.streamPhase,
+    streamStatus: tab.streamStatus,
+    messageCount: tab.messages.length,
+    hasArtifacts: tab.artifacts.length > 0,
+  }))
 
   const handleNewProject = async () => {
     if (isStreaming) return
@@ -335,7 +557,14 @@ export default function Studio() {
   }
 
   const handleSelectProject = async (projectId: string) => {
-    if (isStreaming) return
+    // 如果正在 streaming，先中止
+    if (isStreaming) {
+      abortRef.current?.abort()
+      setStreaming(false)
+      setStreamPhase('idle')
+      setStreamStatus('已停止生成')
+      if (activeTabId) updateTab(activeTabId, { isStreaming: false, streamPhase: 'idle', streamStatus: '已停止生成' })
+    }
     setActiveView('chat')
     setActiveProjectId(projectId)
     refreshProjects()
@@ -355,10 +584,21 @@ export default function Studio() {
   }
 
   const handleNewConversation = () => {
-    if (isStreaming) return
+    // 如果正在 streaming，先中止当前请求再切换
+    if (isStreaming) {
+      abortRef.current?.abort()
+      setStreaming(false)
+      setStreamPhase('idle')
+      setStreamStatus('已停止生成')
+      if (activeTabId) updateTab(activeTabId, { isStreaming: false, streamPhase: 'idle', streamStatus: '已停止生成' })
+    }
     setActiveView('chat')
     refreshConversations()
     reset()
+    // 重置当前 tab 的标题
+    if (activeTabId) {
+      updateTab(activeTabId, { tabTitle: '新对话', sessionId: null })
+    }
     setSearchParams({}, { replace: true })
     autoExportedArtifactIdsRef.current.clear()
     autoSavedArtifactIdsRef.current.clear()
@@ -373,7 +613,14 @@ export default function Studio() {
   }
 
   const handleSelectConversation = async (id: string) => {
-    if (isStreaming) return
+    // 如果正在 streaming，先中止当前请求再切换
+    if (isStreaming) {
+      abortRef.current?.abort()
+      setStreaming(false)
+      setStreamPhase('idle')
+      setStreamStatus('已停止生成')
+      if (activeTabId) updateTab(activeTabId, { isStreaming: false, streamPhase: 'idle', streamStatus: '已停止生成' })
+    }
     setActiveView('chat')
     try {
       const res = await sessionApi.getSession(id)
@@ -418,6 +665,17 @@ export default function Studio() {
       setStreamPhase('done')
       setStreamStatus('已恢复历史会话')
       setProcessLogs(buildHistoryProcessLogs(session))
+      // 更新当前 tab 元信息
+      if (activeTabId) {
+        updateTab(activeTabId, {
+          tabTitle: session.title?.slice(0, 24) || '历史会话',
+          sessionId: session.id,
+          activeTool: tool,
+          activeProjectId: session.project_id || null,
+          streamPhase: 'done',
+          streamStatus: '已恢复历史会话',
+        })
+      }
     } catch (err) {
       console.error('Select conversation error:', err)
       const errMsg = err instanceof Error ? err.message : '未知错误'
@@ -699,6 +957,72 @@ export default function Studio() {
     setAttachments((current) => current.filter((item) => item.id !== id))
   }
 
+  const handleInsertArtifactToInput = (artifact: Artifact, fromSessionId?: string) => {
+    if (isStreaming) return
+
+    // 图片类型：加入附件 + markdown 引用（保持原有逻辑）
+    if (artifact.kind === 'image' && Array.isArray(artifact.content?.images) && artifact.content.images.length > 0) {
+      const newAttachments: ChatAttachment[] = artifact.content.images.slice(0, 3).map((url: string, index: number) => ({
+        id: `artifact-${artifact.id}-${index}-${Date.now()}`,
+        name: `${artifact.title || '图片'}-${index + 1}.png`,
+        kind: 'image' as const,
+        mime_type: 'image/png',
+        size: 0,
+        data_url: url,
+        from_artifact: true,
+      }))
+      setAttachments((current) => {
+        const merged = [...current, ...newAttachments]
+        const deduped = merged.filter((item, index, arr) => arr.findIndex((t) => t.data_url === item.data_url && t.data_url) === index)
+        return deduped.slice(0, 6)
+      })
+      const refText = artifact.content.images.map((url: string, index: number) => `![${artifact.title || '图片'}-${index + 1}](${url})`).join('\n')
+      setInput((current) => (current.trim() ? `${current}\n\n${refText}` : refText))
+      return
+    }
+
+    // 视频类型：加入附件（保持原有逻辑）
+    if (artifact.kind === 'video' && artifact.content?.video_url) {
+      const refText = `[视频：${artifact.title || '未命名'}](${artifact.content.video_url})`
+      setInput((current) => (current.trim() ? `${current}\n\n${refText}` : refText))
+      return
+    }
+
+    // 其他产物类型：添加为输入框引用标签 chip
+    let refText = ''
+    if (artifact.kind === 'ppt') {
+      const slideCount = artifact.content?.slides?.length || artifact.content?.slide_count || 0
+      refText = `[PPT：${artifact.title || '未命名'}，共 ${slideCount} 页]`
+    } else if (artifact.kind === 'document' || artifact.kind === 'markdown') {
+      refText = `[${artifact.kind === 'document' ? '文档' : 'MD'}：${artifact.title || '未命名'}]`
+    } else if (artifact.kind === 'sheet') {
+      refText = `[表格：${artifact.title || '未命名'}]`
+    } else if (artifact.kind === 'drawio') {
+      refText = `[图表：${artifact.title || '未命名'}]`
+    } else {
+      refText = `[${artifact.title || artifact.kind || '产物'}]`
+    }
+
+    const newRef: InputRef = {
+      id: `ref-${artifact.id}-${Date.now()}`,
+      artifactId: artifact.id,
+      kind: artifact.kind,
+      title: artifact.title || '未命名',
+      refText,
+      sessionId: fromSessionId,
+      contentSummary: extractArtifactSummary(artifact),
+    }
+    setInputRefs((current) => {
+      // 去重：同一产物不重复添加
+      if (current.some((ref) => ref.artifactId === artifact.id)) return current
+      return [...current, newRef]
+    })
+  }
+
+  const handleRemoveInputRef = (refId: string) => {
+    setInputRefs((current) => current.filter((ref) => ref.id !== refId))
+  }
+
   const applyRealtimePptState = (payload: {
     project_id?: string
     title?: string
@@ -785,15 +1109,27 @@ export default function Studio() {
   }
 
   const handleSend = async () => {
-    if ((!input.trim() && attachments.length === 0) || isStreaming) return
+    if ((!input.trim() && attachments.length === 0 && inputRefs.length === 0) || isStreaming) return
 
     const hasImageAttachment = attachments.some((item) => item.kind === 'image')
-    const message = input.trim() || (hasImageAttachment ? '请识别并说明我上传图片的主要内容。' : '请结合我上传的文件内容继续处理。')
+    const baseMessage = input.trim() || (hasImageAttachment ? '请识别并说明我上传图片的主要内容。' : '请结合我上传的文件内容继续处理。')
+    // 将 @ 引用标签拼接 + 产物内容摘要作为上下文提供给 AI
+    const refsText = inputRefs.map((ref) => ref.refText).join('\n')
+    const refSummaries = inputRefs
+      .filter((ref) => ref.contentSummary)
+      .map((ref) => ref.contentSummary!)
+    const refContext = refSummaries.length > 0
+      ? `\n\n--- 引用产物内容 ---\n${refSummaries.join('\n\n')}\n--- 引用产物内容结束 ---`
+      : ''
+    const message = (refsText || refContext)
+      ? (baseMessage.trim() ? `${baseMessage}\n\n${refsText}${refContext}` : `${refsText}${refContext}`)
+      : baseMessage
     const pendingAttachments = attachments
     const inferredTool = inferToolFromMessage(message, pendingAttachments)
     if (inferredTool !== activeTool) setActiveTool(inferredTool)
     setInput('')
     setAttachments([])
+    setInputRefs([])
     setStreaming(true)
     setFollowLatestSlide(true)
     setPptProgress(null)
@@ -804,6 +1140,16 @@ export default function Studio() {
       `识别工具：${inferredTool}`,
       ...(pendingAttachments.length > 0 ? [`附件：已接收 ${pendingAttachments.length} 个文件`] : []),
     ])
+    // 同步到 store tab 状态
+    if (activeTabId) {
+      updateTab(activeTabId, {
+        isStreaming: true,
+        streamPhase: 'thinking',
+        streamStatus: pendingAttachments.length > 0 ? '正在整理消息与附件...' : '正在理解需求...',
+        activeTool: inferredTool,
+        tabTitle: message.slice(0, 24) || '新对话',
+      })
+    }
     const abortController = new AbortController()
     abortRef.current = abortController
 
@@ -864,8 +1210,11 @@ export default function Studio() {
               if (data.session_id) {
                 const prevSessionId = sessionId
                 setSessionId(data.session_id)
-                // 首次获得 session_id 时立即刷新列表，让当前对话出现在侧边栏
-                if (!prevSessionId) {
+                // 更新 tab 标题
+                if (activeTabId && !prevSessionId) {
+                  const userMsg = message.slice(0, 24)
+                  updateTab(activeTabId, { tabTitle: userMsg, sessionId: data.session_id })
+                  // 首次获得 session_id 时立即刷新列表，让当前对话出现在侧边栏
                   refreshConversations()
                   refreshProjects()
                 }
@@ -963,6 +1312,7 @@ export default function Studio() {
             case 'state_update':
               setStreamPhase(data.phase === 'done' ? 'done' : 'generating')
               setStreamStatus(data.detail || data.step || '正在处理...')
+              if (activeTabId) updateTab(activeTabId, { streamPhase: data.phase === 'done' ? ('done' as const) : ('generating' as const), streamStatus: data.detail || data.step || '正在处理...' })
               setProcessLogs((logs) => [...logs.slice(-8), `${data.step || '进度'}：${data.detail || ''}`])
               break
 
@@ -984,6 +1334,7 @@ export default function Studio() {
               const doneArtifacts = Array.isArray(data.new_artifacts) ? data.new_artifacts : []
               setStreamPhase('done')
               setStreamStatus(doneArtifacts.length > 0 ? '生成完成' : '回复完成')
+              if (activeTabId) updateTab(activeTabId, { isStreaming: false, streamPhase: 'done', streamStatus: doneArtifacts.length > 0 ? '生成完成' : '回复完成' })
               if (data.session_id) setSessionId(data.session_id)
               // 确保对话结束后立即刷新列表，让当前对话出现在侧边栏
               refreshConversations()
@@ -1015,6 +1366,7 @@ export default function Studio() {
               setStreamPhase('error')
               setStreamStatus(data.message || data.detail || '生成失败')
               setPptProgress(null)
+              if (activeTabId) updateTab(activeTabId, { isStreaming: false, streamPhase: 'error', streamStatus: data.message || data.detail || '生成失败' })
               usePPTStore.setState((state) => {
                 const msgs = [...state.messages]
                 msgs[msgs.length - 1] = {
@@ -1057,6 +1409,7 @@ export default function Studio() {
       abortRef.current = null
       refreshConversations()
       refreshProjects()
+      if (activeTabId) updateTab(activeTabId, { isStreaming: false })
     }
   }
 
@@ -1066,6 +1419,7 @@ export default function Studio() {
     setStreamPhase('idle')
     setStreamStatus('已停止生成')
     setPptProgress(null)
+    if (activeTabId) updateTab(activeTabId, { isStreaming: false, streamPhase: 'idle', streamStatus: '已停止生成' })
   }
 
 
@@ -1340,10 +1694,15 @@ export default function Studio() {
           userName={useAuthStore.getState().user?.username}
           activeTool={activeTool}
           activeConversationId={sessionId}
+          isStreaming={isStreaming}
+          streamPhase={streamPhase}
+          localTabs={conversationTabs.map((t) => ({ id: t.id, title: t.title, tool: t.tool, messageCount: t.messageCount, isStreaming: t.isStreaming, streamPhase: t.streamPhase, sessionId: tabs[t.id]?.sessionId }))}
+          activeTabId={activeTabId}
+          onSelectTab={handleSelectTab}
           onToolChange={handleToolChange}
           onSelectConversation={handleSelectConversation}
           onSelectProject={handleSelectProject}
-          onNewConversation={handleNewConversation}
+          onNewConversation={handleNewTab}
           onRenameConversation={handleRenameConversation}
           onDeleteConversation={handleDeleteConversation}
           onMoveConversation={handleMoveConversation}
@@ -1375,6 +1734,13 @@ export default function Studio() {
             <div className="mx-4 min-w-0 flex-1" />
 
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => navigate('/files')}
+                className="btn-ghost rounded-full bg-white/45 hover:bg-white/75"
+                title="我的文件"
+              >
+                <Files className="w-4 h-4" />
+              </button>
               <button
                 onClick={() => setShowArtifactPanel(!showArtifactPanel)}
                 className="btn-ghost rounded-full bg-white/45 hover:bg-white/75 disabled:cursor-not-allowed disabled:opacity-40"
@@ -1432,8 +1798,12 @@ export default function Studio() {
                 attachments={attachments}
                 onPickAttachments={handlePickAttachments}
                 onRemoveAttachment={handleRemoveAttachment}
+                inputRefs={inputRefs}
+                onRemoveInputRef={handleRemoveInputRef}
+                historyArtifacts={historyArtifacts}
                 onOpenArtifact={handleOpenArtifact}
                 onExportArtifact={handleExportArtifact}
+                onInsertArtifact={handleInsertArtifactToInput}
                 messagesEndRef={messagesEndRef}
               />
             )}
@@ -1464,6 +1834,7 @@ export default function Studio() {
             onExportDocx={handleExportDocx}
             onExportMarkdown={handleExportMarkdown}
             onExportDrawio={handleExportDrawio}
+            onInsertArtifact={handleInsertArtifactToInput}
           />
         )}
       </div>

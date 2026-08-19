@@ -329,7 +329,8 @@ const KEYWORD_RULES: &[WeightedKeywordRule] = &[
     // ── 视频生成 ──
     WeightedKeywordRule {
         keywords: &["生成视频", "做视频", "制作视频", "图生视频", "以图生视频", "短视频", "短片",
-                     "宣传片", "动起来", "动态化", "动态海报", "视频广告", "片头", "转场动画"],
+                     "宣传片", "动起来", "动态化", "动态海报", "视频广告", "片头", "转场动画",
+                     "分镜", "分镜头", "多镜头", "故事短片", "发布会视频", "完整视频"],
         intent: IntentType::Video,
         weight: 0.9,
         base_confidence: 0.8,
@@ -773,7 +774,7 @@ impl IntentAnalyzer {
                 Some(vec!["image_prompt".to_string()])
             }
             IntentType::Video => {
-                Some(vec!["video_generate".to_string()])
+                Some(vec!["video_generate".to_string(), "video_storyboard".to_string(), "video_batch_generate".to_string()])
             }
             _ => None,
         }

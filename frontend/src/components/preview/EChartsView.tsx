@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, type CSSProperties } from 'react'
-import * as echarts from 'echarts'
+import * as echarts from 'echarts/core'
+import { BarChart, LineChart, PieChart, ScatterChart, RadarChart, GaugeChart, FunnelChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsOption } from 'echarts'
+
+echarts.use([
+  BarChart, LineChart, PieChart, ScatterChart, RadarChart, GaugeChart, FunnelChart,
+  GridComponent, TooltipComponent, LegendComponent, TitleComponent,
+  CanvasRenderer,
+])
 
 type ChartType = 'line' | 'bar' | 'pie' | 'scatter' | 'radar' | 'gauge' | 'funnel'
 

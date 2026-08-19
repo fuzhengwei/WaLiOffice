@@ -1,10 +1,11 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X, Clapperboard } from 'lucide-react'
+import { AlertCircle, Check, Circle, Download, Eye, Files, Loader2, Send, Sparkles, Square, ChevronRight, ChevronDown, Terminal, Wrench, FileEdit, Sheet, PenTool, Image as ImageIcon, LayoutDashboard, Bot, Paperclip, X, Clapperboard, MessageSquarePlus } from 'lucide-react'
 import { AGENT_TOOLS, getAgentTool } from '@/config/agent-tools'
 import { useRef, useState, useEffect, Fragment, useMemo } from 'react'
-import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, LLMProfile, PPTProject, ToolKind, ToolConfigMap } from '@/types'
+import { FilePickerPanel } from './FilePickerPanel'
+import type { AgentTraceEvent, Artifact, ChatAttachment, ChatMessage, InputRef, LLMProfile, PPTProject, ToolKind, ToolConfigMap } from '@/types'
 import { findArtifactTurnGroup, groupArtifactsByTurn } from '@/lib/artifact-turns'
 import { ToolConfigDropdown } from './ToolConfigDropdown'
 
@@ -37,8 +38,13 @@ interface ChatPanelProps {
   attachments: ChatAttachment[]
   onPickAttachments: () => void
   onRemoveAttachment: (id: string) => void
+  inputRefs: InputRef[]
+  onRemoveInputRef: (id: string) => void
   onOpenArtifact: (artifactId: string) => void
   onExportArtifact: (artifact: Artifact) => void
+  onInsertArtifact: (artifact: Artifact, sessionId?: string) => void
+  /** 历史会话产物列表（用于 @ 引用历史产物） */
+  historyArtifacts?: { artifact: Artifact; sessionTitle: string; sessionId: string }[]
   messagesEndRef: React.RefObject<HTMLDivElement>
 }
 
@@ -160,6 +166,54 @@ function AttachmentPreview({
   )
 }
 
+/** @ 引用产物的标签 chip 图标映射 */
+const refIconMap: Record<string, typeof Bot> = {
+  ppt: LayoutDashboard,
+  document: FileEdit,
+  markdown: FileEdit,
+  sheet: Sheet,
+  drawio: PenTool,
+  image: ImageIcon,
+  video: Clapperboard,
+  code: Terminal,
+  search: Sparkles,
+  mixed: Bot,
+}
+
+const refColorMap: Record<string, string> = {
+  ppt: 'bg-blue-50 text-blue-700 ring-blue-200',
+  document: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  markdown: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  sheet: 'bg-amber-50 text-amber-700 ring-amber-200',
+  drawio: 'bg-violet-50 text-violet-700 ring-violet-200',
+  image: 'bg-pink-50 text-pink-700 ring-pink-200',
+  video: 'bg-rose-50 text-rose-700 ring-rose-200',
+  code: 'bg-slate-50 text-slate-700 ring-slate-200',
+  search: 'bg-sky-50 text-sky-700 ring-sky-200',
+  mixed: 'bg-surface-50 text-surface-700 ring-surface-200',
+}
+
+function InputRefChip({ refItem, onRemove }: { refItem: InputRef; onRemove?: (id: string) => void }) {
+  const Icon = refIconMap[refItem.kind] || Bot
+  const colorClass = refColorMap[refItem.kind] || refColorMap.mixed
+  return (
+    <div className={`group inline-flex max-w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium ring-1 ${colorClass}`}>
+      <Icon className="h-3.5 w-3.5 shrink-0" />
+      <span className="max-w-[160px] truncate">{refItem.title}</span>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={() => onRemove(refItem.id)}
+          className="ml-0.5 rounded-full p-0.5 opacity-60 transition hover:bg-black/5 hover:opacity-100"
+          title="移除引用"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 const toolDot: Record<ToolKind, string> = {
   general: 'bg-sky-400',
   ppt: 'bg-blue-500',
@@ -261,8 +315,12 @@ export function ChatPanel({
   attachments,
   onPickAttachments,
   onRemoveAttachment,
+  inputRefs,
+  onRemoveInputRef,
+  historyArtifacts,
   onOpenArtifact,
   onExportArtifact,
+  onInsertArtifact,
   messagesEndRef,
 }: ChatPanelProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -272,6 +330,8 @@ export function ChatPanel({
   const sessionId = null
   const [processPanelExpanded, setProcessPanelExpanded] = useState(true)
   const [artifactSummaryExpanded, setArtifactSummaryExpanded] = useState(false)
+  const [showFilePicker, setShowFilePicker] = useState(false)
+  const [artifactPickerScope, setArtifactPickerScope] = useState<Artifact[]>(artifacts)
   const previousArtifactsLengthRef = useRef(artifacts.length)
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
@@ -329,7 +389,14 @@ export function ChatPanel({
     return '正在处理任务'
   }
 
-  const inputPlaceholder = input ? '' : `继续输入需求，或直接描述要生成的${tool.artifactLabel}`
+  const inputPlaceholder = input ? '' : `输入需求，@ 引用产物，描述要生成的${tool.artifactLabel}`
+  const handleFilePickerSelect = (artifact: Artifact, sessionId?: string) => {
+    setShowFilePicker(false)
+    onInsertArtifact(artifact, sessionId)
+    // 焦点回 textarea
+    window.setTimeout(() => textareaRef.current?.focus(), 50)
+  }
+
   const compactStreamStatus = summarizeStreamStatus(streamStatus)
   const elapsedLabel = streamStartedAt ? formatElapsed(elapsedSeconds) : '0s'
 
@@ -339,6 +406,25 @@ export function ChatPanel({
       if (nativeEvent.isComposing || e.currentTarget.dataset.composing === 'true') return
       e.preventDefault()
       onSend()
+      return
+    }
+    // @ 快捷键触发文件选择浮层（不在输入法组词状态下）
+    if (e.key === '@' && !(nativeEvent.isComposing || e.currentTarget.dataset.composing === 'true')) {
+      // 仅当光标前是空格、换行或处于行首时触发（避免邮箱地址等误触）
+      const ta = e.currentTarget
+      const pos = ta.selectionStart
+      const before = ta.value.slice(0, pos)
+      const isAtStart = pos === 0 || /\s$/.test(before)
+      if (isAtStart && (artifacts.length > 0 || (historyArtifacts && historyArtifacts.length > 0))) {
+        e.preventDefault()
+        setArtifactPickerScope(artifacts)
+        setShowFilePicker(true)
+      }
+    }
+    // ESC 关闭浮层
+    if (e.key === 'Escape' && showFilePicker) {
+      e.preventDefault()
+      setShowFilePicker(false)
     }
   }
 
@@ -396,7 +482,7 @@ export function ChatPanel({
   const artifactTurnGroups = useMemo(() => groupArtifactsByTurn(artifacts, messages), [artifacts, messages])
   const selectedArtifactTurn = findArtifactTurnGroup(selectedArtifact?.id || null, artifactTurnGroups)
   const [expandedTurnKeys, setExpandedTurnKeys] = useState<string[]>([])
-  const canSend = input.trim().length > 0 || attachments.length > 0
+  const canSend = input.trim().length > 0 || attachments.length > 0 || inputRefs.length > 0
   const starterCards: Array<{ title: string; desc: string; prompt: string; tool: ToolKind; icon: typeof Bot; accent: string }> = [
     {
       title: '生成 PPT',
@@ -440,8 +526,8 @@ export function ChatPanel({
     },
     {
       title: '生成动画片',
-      desc: '故事脚本到动画短片',
-      prompt: '帮我生成一段 15 秒的可爱动画片：一只小猫在办公室里踩键盘打字，结果屏幕上弹出了满屏的猫爪印，小猫吓得从椅子上摔下来，风格轻松搞笑，Q版萌系。',
+      desc: '分镜制作动画短片',
+      prompt: '帮我用分镜模式生成一段 15 秒的动画短片：一只小猫在办公室里踩键盘打字，结果屏幕上弹出了满屏的猫爪印，小猫吓得从椅子上摔下来，风格轻松搞笑，Q版萌系，分 3 个镜头。',
       tool: 'video',
       icon: Clapperboard,
       accent: 'from-rose-500 to-orange-500',
@@ -714,25 +800,38 @@ export function ChatPanel({
                                 const ArtifactIcon = meta.icon
                                 const isActive = selectedArtifact?.id === artifact.id
                                 return (
-                                  <button
+                                  <div
                                     key={artifact.id}
-                                    type="button"
-                                    onClick={() => onOpenArtifact(artifact.id)}
-                                    className={`group inline-flex min-w-[220px] shrink-0 items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-xs transition-all ${
+                                    className={`group relative inline-flex min-w-[220px] shrink-0 items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-xs transition-all ${
                                       isActive
                                         ? 'border-surface-900 bg-surface-950 text-white shadow-[0_12px_26px_rgba(24,24,27,0.20)]'
                                         : 'border-black/[0.06] bg-white/92 text-surface-600 shadow-sm hover:-translate-y-0.5 hover:bg-white hover:text-surface-900 hover:shadow-md'
                                     }`}
                                   >
-                                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${isActive ? 'bg-white/12 text-white' : 'bg-surface-50 text-surface-700 ring-1 ring-black/[0.05]'}`}>
-                                      <ArtifactIcon className="h-4 w-4" />
-                                    </span>
-                                    <span className="min-w-0 flex-1 text-left">
-                                      <span className="block truncate font-semibold">{artifact.title || meta.label}</span>
-                                      <span className={`mt-0.5 block text-[10px] ${isActive ? 'text-white/60' : 'text-surface-400'}`}>{meta.label}</span>
-                                    </span>
-                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${isActive ? 'bg-white/12 text-white/85' : 'bg-surface-100 text-surface-500'}`}>{artifactExtension(artifact)}</span>
-                                  </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => onOpenArtifact(artifact.id)}
+                                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                                    >
+                                      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${isActive ? 'bg-white/12 text-white' : 'bg-surface-50 text-surface-700 ring-1 ring-black/[0.05]'}`}>
+                                        <ArtifactIcon className="h-4 w-4" />
+                                      </span>
+                                      <span className="min-w-0 flex-1 text-left">
+                                        <span className="block truncate font-semibold">{artifact.title || meta.label}</span>
+                                        <span className={`mt-0.5 block text-[10px] ${isActive ? 'text-white/60' : 'text-surface-400'}`}>{meta.label}</span>
+                                      </span>
+                                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${isActive ? 'bg-white/12 text-white/85' : 'bg-surface-100 text-surface-500'}`}>{artifactExtension(artifact)}</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => onInsertArtifact(artifact)}
+                                      disabled={isStreaming}
+                                      className={`shrink-0 rounded-full p-1 transition-all disabled:opacity-30 ${isActive ? 'text-white/70 hover:bg-white/15 hover:text-white' : 'text-surface-400 hover:bg-surface-100 hover:text-surface-700'}`}
+                                      title="引用到对话"
+                                    >
+                                      <MessageSquarePlus className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
                                 )
                               })}
                             </div>
@@ -758,6 +857,10 @@ export function ChatPanel({
                           <button type="button" onClick={() => onOpenArtifact(selectedArtifact.id)} className="inline-flex items-center gap-1.5 rounded-full bg-surface-950 px-3.5 py-2.5 text-xs font-bold text-white shadow-[0_10px_22px_rgba(24,24,27,0.20)] hover:bg-surface-800">
                             <Eye className="h-3.5 w-3.5" />
                             预览
+                          </button>
+                          <button type="button" onClick={() => onInsertArtifact(selectedArtifact)} disabled={isStreaming} className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white px-3.5 py-2.5 text-xs font-bold text-surface-700 shadow-sm hover:bg-surface-50 disabled:opacity-40">
+                            <MessageSquarePlus className="h-3.5 w-3.5" />
+                            引用
                           </button>
                           {(selectedArtifact.kind === 'ppt' || selectedArtifact.kind === 'document' || selectedArtifact.kind === 'markdown' || selectedArtifact.kind === 'sheet' || selectedArtifact.kind === 'drawio' || selectedArtifact.kind === 'image' || selectedArtifact.kind === 'video') && (
                             <button type="button" onClick={() => onExportArtifact(selectedArtifact)} className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white px-3.5 py-2.5 text-xs font-bold text-surface-700 shadow-sm hover:bg-surface-50">
@@ -787,7 +890,26 @@ export function ChatPanel({
                 ))}
               </div>
             )}
-            <div className="rounded-[1.55rem] border border-black/[0.05] bg-[#fcfbf8]/96 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+            {inputRefs.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-1.5 px-1">
+                {inputRefs.map((refItem) => (
+                  <InputRefChip
+                    key={refItem.id}
+                    refItem={refItem}
+                    onRemove={isStreaming ? undefined : onRemoveInputRef}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="relative rounded-[1.55rem] border border-black/[0.05] bg-[#fcfbf8]/96 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+              {showFilePicker && !isStreaming && (
+                <FilePickerPanel
+                  artifacts={artifactPickerScope}
+                  historyArtifacts={historyArtifacts}
+                  onSelect={handleFilePickerSelect}
+                  onClose={() => setShowFilePicker(false)}
+                />
+              )}
               <div className="min-h-[90px]">
                 {isStreaming ? (
                   <div className="flex min-h-[72px] items-start text-[15px] leading-[1.7] text-surface-400">
@@ -847,6 +969,22 @@ export function ChatPanel({
                     </button>
                   ) : (
                     <>
+                      {selectableModels.length > 1 && (
+                        <div className="relative">
+                          <select
+                            value={selectedModel}
+                            onChange={(event) => onModelChange(event.target.value)}
+                            disabled={isStreaming}
+                            className="h-8 max-w-[120px] appearance-none rounded-full border border-black/[0.05] bg-white/90 px-3 pr-8 text-[11px] text-surface-600 outline-none transition-all hover:border-black/[0.08] hover:bg-white disabled:opacity-50"
+                            title="选择模型"
+                          >
+                            {selectableModels.map((model) => (
+                              <option key={model} value={model}>{model}</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-surface-400" />
+                        </div>
+                      )}
                       <div className="relative">
                         <select
                           value={selectedProjectId || ''}

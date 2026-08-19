@@ -69,6 +69,19 @@ async fn run_migrations_sqlite(pool: &sqlx::SqlitePool) -> Result<()> {
 }
 
 async fn run_migrations_mysql(pool: &sqlx::MySqlPool) -> Result<()> {
+    // 检查 users 表是否已存在，存在则跳过迁移（避免每次重启清空数据）
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'users'"
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    if table_exists {
+        info!("📦 MySQL 表已存在，跳过迁移");
+        return Ok(());
+    }
+
     let sql = include_str!("../../../migrations/001_init_mysql.sql");
     sqlx::raw_sql(sql).execute(pool).await?;
     Ok(())

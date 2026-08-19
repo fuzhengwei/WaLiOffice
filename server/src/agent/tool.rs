@@ -14,6 +14,8 @@ pub struct ToolContext {
     pub project_id: Option<String>,
     pub preferred_model: Option<String>,
     pub attachments: Vec<ChatAttachment>,
+    /// 当前会话中已有的产物历史（用于跨工具引用，如视频工具引用之前的图片产物）
+    pub prior_artifacts: Vec<Artifact>,
     /// SSE 推送回调（向前端发送实时进度）
     pub emit: Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>,
     /// 共享上下文（跨工具传递，如 PPT 大纲规划）
@@ -37,6 +39,7 @@ impl ToolContext {
             project_id,
             preferred_model,
             attachments,
+            prior_artifacts: Vec::new(),
             emit: Arc::new(emit),
             scratchpad: Arc::new(Mutex::new(HashMap::new())),
             tool_config: None,
@@ -45,6 +48,12 @@ impl ToolContext {
 
     pub fn with_tool_config(mut self, config: serde_json::Value) -> Self {
         self.tool_config = Some(config);
+        self
+    }
+
+    /// 设置会话中已有的产物历史
+    pub fn with_prior_artifacts(mut self, artifacts: Vec<Artifact>) -> Self {
+        self.prior_artifacts = artifacts;
         self
     }
 

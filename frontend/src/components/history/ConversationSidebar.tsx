@@ -15,6 +15,12 @@ interface ConversationSidebarProps {
   userName?: string
   activeTool: ToolKind
   activeConversationId?: string | null
+  isStreaming?: boolean
+  streamPhase?: 'idle' | 'thinking' | 'generating' | 'finishing' | 'done' | 'error'
+  // 多 tab：本地 tab 列表（尚未保存到后端的对话）
+  localTabs?: { id: string; title: string; tool: ToolKind; messageCount: number; isStreaming: boolean; streamPhase?: 'idle' | 'thinking' | 'generating' | 'finishing' | 'done' | 'error'; sessionId?: string | null }[]
+  activeTabId?: string | null
+  onSelectTab?: (id: string) => void
   onToolChange: (tool: ToolKind) => void
   onSelectConversation?: (id: string) => void
   onSelectProject?: (projectId: string) => void
@@ -85,7 +91,8 @@ function includesKeyword(value: string | undefined, keyword: string) {
 }
 
 function sortConversations(items: ConversationRecord[]) {
-  return [...items].sort((a, b) => (a.order_col || 0) - (b.order_col || 0) || Date.parse(b.updated_at || '') - Date.parse(a.updated_at || ''))
+  // 按 updated_at 降序排列（最新的在上面），order_col 作为次要排序
+  return [...items].sort((a, b) => Date.parse(b.updated_at || '') - Date.parse(a.updated_at || '') || (a.order_col || 0) - (b.order_col || 0))
 }
 
 export function ConversationSidebar({
@@ -97,6 +104,11 @@ export function ConversationSidebar({
   userName,
   activeTool,
   activeConversationId,
+  isStreaming = false,
+  streamPhase = 'idle',
+  localTabs = [],
+  activeTabId,
+  onSelectTab,
   onSelectConversation,
   onSelectProject,
   onNewConversation,
@@ -131,7 +143,41 @@ export function ConversationSidebar({
 
   const latestMessage = messages[messages.length - 1]
   const conversationTitle = project?.title || firstUserPrompt(messages)
-  const shouldShowDraftConversation = messages.length > 0 && !activeConversationId
+
+  // 合并本地 tab 和 API 会话
+  // localTabs 中已有 sessionId 的会去重匹配 conversations 中的已保存会话
+  const savedSessionIds = new Set(conversations.map((c) => c.id))
+  const localOnlyTabs: ConversationRecord[] = localTabs
+    .filter((t) => !t.sessionId || !savedSessionIds.has(t.sessionId))
+    .map((t) => ({
+      id: t.id,
+      title: t.title || '新对话',
+      tool: t.tool,
+      summary: t.isStreaming ? '正在处理...' : (t.messageCount > 0 ? `${t.messageCount} 条消息` : '空白对话'),
+      updated_at: new Date().toISOString(),
+      message_count: t.messageCount,
+      project_id: undefined,
+    }))
+
+  // 只有当当前活跃 tab 已经有 sessionId（已保存到后端）或者没有 localTabs 时，
+  // 且 messages 非空且没有 activeConversationId 时，才显示 draft current 项。
+  // 如果当前 tab 在 localOnlyTabs 中已经显示了，就不再重复创建 current 项。
+  const activeTabInLocalOnly = activeTabId ? localOnlyTabs.some((t) => t.id === activeTabId) : false
+  const shouldShowDraftConversation = messages.length > 0 && !activeConversationId && !activeTabInLocalOnly
+
+  // 构建 streaming tab 的查找表：id -> isStreaming/streamPhase
+  const streamingTabMap = new Map<string, { isStreaming: boolean; streamPhase: string }>()
+  for (const t of localTabs) {
+    if (t.isStreaming && t.streamPhase) {
+      streamingTabMap.set(t.id, { isStreaming: t.isStreaming, streamPhase: t.streamPhase })
+      // 如果 tab 已有 sessionId，也映射 sessionId -> streaming 状态
+      if (t.sessionId) {
+        streamingTabMap.set(t.sessionId, { isStreaming: t.isStreaming, streamPhase: t.streamPhase })
+      }
+    }
+  }
+
+  // 当前对话排在最前面
   const currentConversations = shouldShowDraftConversation
     ? [{
         id: 'current',
@@ -144,18 +190,30 @@ export function ConversationSidebar({
       } as ConversationRecord, ...conversations.filter((item) => item.id !== 'current')]
     : conversations
 
+  // 对正在 streaming 的已保存会话，更新 updated_at 到当前时间，使其排在最前面
+  const boostedConversations = currentConversations.map((item) => {
+    const tabInfo = streamingTabMap.get(item.id)
+    if (tabInfo && tabInfo.isStreaming && tabInfo.streamPhase !== 'done' && tabInfo.streamPhase !== 'error' && tabInfo.streamPhase !== 'idle') {
+      return { ...item, updated_at: new Date().toISOString() }
+    }
+    return item
+  })
+
+  // 最终展示列表：本地 tab + API 会话，新对话在最上面
+  const allConversations = [...localOnlyTabs, ...boostedConversations]
+
   const { filteredProjects, unassignedConversations, conversationsByProject } = useMemo(() => {
     const keyword = searchQuery.trim()
     const filteredProjects = keyword
       ? projects.filter((proj) => includesKeyword(proj.title, keyword) || includesKeyword(proj.description, keyword))
       : projects
     const filteredConversations = keyword
-      ? currentConversations.filter((item) =>
+      ? allConversations.filter((item) =>
           includesKeyword(item.title, keyword)
           || includesKeyword(item.summary, keyword)
           || includesKeyword(item.project_title, keyword)
         )
-      : currentConversations
+      : allConversations
     const byProject = new Map<string, ConversationRecord[]>()
     for (const proj of filteredProjects) {
       byProject.set(proj.id, sortConversations(filteredConversations.filter((c) => c.project_id === proj.id)))
@@ -165,7 +223,7 @@ export function ConversationSidebar({
       unassignedConversations: sortConversations(filteredConversations.filter((c) => !c.project_id)),
       conversationsByProject: byProject,
     }
-  }, [projects, currentConversations, searchQuery])
+  }, [projects, allConversations, searchQuery])
 
   const workspaceLinks = [
     { to: '/', label: '智能助手', icon: Sparkles, active: location.pathname === '/' },
@@ -210,7 +268,7 @@ export function ConversationSidebar({
     setDraggingId(null)
     setDropTarget(null)
     if (!id || id === 'current' || id === beforeId) return
-    const item = currentConversations.find((conv) => conv.id === id)
+    const item = allConversations.find((conv) => conv.id === id)
     if (!item) return
     if ((item.project_id || null) === projectId && id === beforeId) return
     onMoveConversation?.(id, projectId, beforeId)
@@ -226,14 +284,25 @@ export function ConversationSidebar({
   )
 
   const renderConversationItem = (item: ConversationRecord, child = false) => {
-    const active = activeConversationId ? item.id === activeConversationId : item.id === 'current'
+    const isLocalTab = item.id.startsWith('tab-')
+    const active = isLocalTab
+      ? item.id === activeTabId
+      : activeConversationId
+        ? item.id === activeConversationId
+        : item.id === 'current'
     const Icon = iconMap[item.tool] || MessageSquare
+
+    // 判断是否正在对话中：活跃对话用全局 isStreaming，非活跃对话查 streamingTabMap
+    const tabStreamingInfo = streamingTabMap.get(item.id)
+    const isItemStreaming = tabStreamingInfo
+      ? tabStreamingInfo.isStreaming && tabStreamingInfo.streamPhase !== 'done' && tabStreamingInfo.streamPhase !== 'error' && tabStreamingInfo.streamPhase !== 'idle'
+      : (active && isStreaming && streamPhase !== 'done' && streamPhase !== 'error' && streamPhase !== 'idle')
 
     if (child) {
       return (
         <div
           key={item.id}
-          draggable={item.id !== 'current'}
+          draggable={!isLocalTab && item.id !== 'current'}
           onDragStart={(event) => handleDragStart(event, item)}
           onDragOver={(event) => handleDragOver(event, item.project_id || null, item.id)}
           onDrop={(event) => handleDrop(event, item.project_id || null, item.id)}
@@ -247,10 +316,24 @@ export function ConversationSidebar({
           <div className={`absolute left-0 top-1/2 h-px w-2 bg-black/[0.06]`} />
           <button
             type="button"
-            onClick={() => item.id !== 'current' && onSelectConversation?.(item.id)}
+            onClick={() => {
+              if (isLocalTab) {
+                onSelectTab?.(item.id)
+              } else if (item.id !== 'current') {
+                onSelectConversation?.(item.id)
+              }
+            }}
             className={`flex w-full min-w-0 items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-all ${active ? 'bg-surface-950/5 ring-1 ring-surface-950/10' : 'hover:bg-white/55'}`}
           >
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolColors[item.tool] || 'bg-surface-400'}`} />
+            {/* 呼吸灯效果：正在对话中 */}
+            {isItemStreaming ? (
+              <span className="relative flex h-2 w-2 shrink-0 items-center justify-center">
+                <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${toolColors[item.tool] || 'bg-surface-400'} opacity-75`} />
+                <span className={`relative inline-flex h-2 w-2 rounded-full ${toolColors[item.tool] || 'bg-surface-400'}`} />
+              </span>
+            ) : (
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolColors[item.tool] || 'bg-surface-400'}`} />
+            )}
             <span className="min-w-0 flex-1 truncate text-[11px] font-semibold leading-4 text-surface-650">
               {trimTitle(item.title)}
             </span>
@@ -278,7 +361,7 @@ export function ConversationSidebar({
     return (
       <div
         key={item.id}
-        draggable={item.id !== 'current'}
+        draggable={!isLocalTab && item.id !== 'current'}
         onDragStart={(event) => handleDragStart(event, item)}
         onDragOver={(event) => handleDragOver(event, item.project_id || null, item.id)}
         onDrop={(event) => handleDrop(event, item.project_id || null, item.id)}
@@ -287,25 +370,51 @@ export function ConversationSidebar({
         onMouseLeave={() => setHovered(null)}
         className={`group relative overflow-hidden rounded-[1.35rem] transition-all duration-200 ${draggingId === item.id ? 'opacity-45' : ''} ${isDropTarget(item.project_id || null, item.id) ? 'ring-2 ring-surface-950/20' : ''} ${active ? 'bg-white shadow-[0_16px_38px_rgba(24,24,27,0.08)] ring-1 ring-black/[0.06]' : 'bg-white/38 hover:-translate-y-0.5 hover:bg-white/72 hover:shadow-[0_14px_30px_rgba(24,24,27,0.06)]'}`}
       >
-        {active && <div className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-surface-950" />}
+        {/* 活跃指示条 + 呼吸灯 */}
+        {active && (
+          <div className={`absolute inset-y-3 left-0 w-1 rounded-r-full ${isItemStreaming ? 'animate-pulse bg-gradient-to-b from-surface-950 via-surface-700 to-surface-950' : 'bg-surface-950'}`} />
+        )}
         <button
           type="button"
-          onClick={() => item.id !== 'current' && onSelectConversation?.(item.id)}
+          onClick={() => {
+            if (isLocalTab) {
+              onSelectTab?.(item.id)
+            } else if (item.id !== 'current') {
+              onSelectConversation?.(item.id)
+            }
+          }}
           className="flex w-full min-w-0 items-center gap-3 px-3 py-3 text-left"
         >
-          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-all ${active ? 'bg-surface-950 text-white shadow-[0_10px_24px_rgba(24,24,27,0.18)]' : 'bg-white/90 text-surface-500 ring-1 ring-black/[0.06] group-hover:text-surface-800'}`}>
+          <div className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-all ${active ? 'bg-surface-950 text-white shadow-[0_10px_24px_rgba(24,24,27,0.18)]' : 'bg-white/90 text-surface-500 ring-1 ring-black/[0.06] group-hover:text-surface-800'}`}>
             <Icon className="h-[18px] w-[18px]" />
+            {/* 呼吸灯涟漪 */}
+            {isItemStreaming && (
+              <span className="absolute inset-0 rounded-2xl bg-surface-950/20 animate-ping" />
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
               <span className="min-w-0 flex-1 truncate text-[13px] font-black leading-5 text-surface-900">{trimTitle(item.title)}</span>
-              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full shadow-[0_0_0_3px_rgba(255,255,255,0.9)] ${toolColors[item.tool] || 'bg-surface-400'}`} />
+              {/* 状态圆点：呼吸灯 vs 静止 */}
+              {isItemStreaming ? (
+                <span className="relative mt-1.5 flex h-2 w-2 shrink-0 items-center justify-center">
+                  <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${toolColors[item.tool] || 'bg-surface-400'} opacity-75`} />
+                  <span className={`relative inline-flex h-2 w-2 rounded-full ${toolColors[item.tool] || 'bg-surface-400'}`} />
+                </span>
+              ) : (
+                <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full shadow-[0_0_0_3px_rgba(255,255,255,0.9)] ${toolColors[item.tool] || 'bg-surface-400'}`} />
+              )}
             </div>
             <div className="mt-1.5 flex items-center gap-2 text-[11px] font-medium text-surface-400">
               <span>{formatTime(item.updated_at) || '刚刚'}</span>
               <span className="h-1 w-1 rounded-full bg-surface-300" />
               <span>{item.message_count || 0} 条</span>
-              <span className="ml-auto rounded-full bg-surface-100/90 px-2 py-0.5 text-[10px] font-black leading-none text-surface-500 ring-1 ring-black/[0.03]">{toolLabel[item.tool]}</span>
+              {isItemStreaming && (
+                <span className="ml-auto animate-pulse rounded-full bg-surface-950/8 px-2 py-0.5 text-[10px] font-black leading-none text-surface-700">生成中</span>
+              )}
+              {!isItemStreaming && (
+                <span className="ml-auto rounded-full bg-surface-100/90 px-2 py-0.5 text-[10px] font-black leading-none text-surface-500 ring-1 ring-black/[0.03]">{toolLabel[item.tool]}</span>
+              )}
             </div>
           </div>
         </button>
