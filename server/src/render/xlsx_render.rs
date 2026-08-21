@@ -1,82 +1,44 @@
-use anyhow::Result;
-use rust_xlsxwriter::*;
-use serde::{Deserialize, Serialize};
+// Excel 表格渲染（2-1 节 stub，完整实现在 3-4 节）
+//
+// 底层使用 rust_xlsxwriter 库，纯 Rust 生成 .xlsx 文件。
+// 完整实现包含：多 Sheet 构建、单元格格式化、图表数据渲染。
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use std::io::Write;
+use std::path::Path;
+use serde::Deserialize;
+
+// ─── 数据类型（与 doc_export.rs 耦合，完整实现见 3-4 节） ─────────────────────
+
+#[derive(Deserialize)]
+pub struct SheetData {
+    pub title: String,
+    pub tables: Vec<SheetTable>,
+}
+
+#[derive(Deserialize)]
 pub struct SheetTable {
     pub title: String,
     pub headers: Vec<String>,
     pub rows: Vec<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SheetData {
-    pub title: String,
-    pub tables: Vec<SheetTable>,
-}
+// ─── 渲染函数（2-1 stub） ────────────────────────────────────────────────────
 
-pub fn render_xlsx(data: &SheetData, output_path: &std::path::Path) -> Result<()> {
-    let mut workbook = Workbook::new();
-
-    for (idx, table) in data.tables.iter().enumerate() {
-        let sheet_name = if data.tables.len() == 1 {
-            sanitize_sheet_name(&data.title)
-        } else {
-            sanitize_sheet_name(&format!("{}_{}", idx + 1, table.title))
-        };
-        let worksheet = workbook.add_worksheet();
-        worksheet.set_name(&sheet_name)?;
-
-        // 标题行
-        if data.tables.len() > 1 {
-            worksheet.write_string(0, 0, &table.title)?;
-            worksheet.set_column_width(0, 20)?;
-        }
-
-        let header_row = if data.tables.len() > 1 { 1u32 } else { 0u32 };
-
-        // 表头
-        let header_format = Format::new()
-            .set_bold()
-            .set_background_color(0xDC2626)
-            .set_font_color(0xFFFFFF);
-
-        for (col, header) in table.headers.iter().enumerate() {
-            worksheet.write_string_with_format(header_row, col as u16, header, &header_format)?;
-            worksheet.set_column_width(col as u16, 18)?;
-        }
-
-        // 数据行
-        for (row_idx, row) in table.rows.iter().enumerate() {
-            for (col, cell) in row.iter().enumerate() {
-                let r = header_row + 1 + row_idx as u32;
-                // 尝试写数字，否则写字符串
-                if let Ok(num) = cell.parse::<f64>() {
-                    worksheet.write_number(r, col as u16, num)?;
-                } else {
-                    worksheet.write_string(r, col as u16, cell)?;
-                }
-            }
-        }
-
-        // 自适应列宽（简单版）
-        worksheet.autofit();
+/// 渲染 Excel 表格（2-1 节暂不实现，输出空文件）
+pub fn render_xlsx(data: &SheetData, path: &Path) -> anyhow::Result<()> {
+    // 完整实现在 3-4 节：
+    // 1. 用 rust_xlsxwriter 构建 workbook
+    // 2. 多 Sheet 时 sheet 名为 idx+1_标题
+    // 3. set_bold 表头格式化
+    // 4. 返回文件路径
+    tracing::warn!(
+        "render_xlsx stub: {} ({} tables), real impl in 3-4",
+        data.title,
+        data.tables.len()
+    );
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-
-    workbook.save(output_path)?;
+    std::fs::File::create(path)?.write_all(b"")?;
     Ok(())
-}
-
-fn sanitize_sheet_name(name: &str) -> String {
-    // Excel sheet 名限制：≤31 字符，不能含 : \ / ? * [ ]
-    let cleaned: String = name
-        .chars()
-        .filter(|c| !matches!(c, ':' | '\\' | '/' | '?' | '*' | '[' | ']'))
-        .collect();
-    let cleaned = if cleaned.is_empty() {
-        "Sheet".to_string()
-    } else {
-        cleaned
-    };
-    cleaned.chars().take(31).collect()
 }

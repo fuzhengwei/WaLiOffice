@@ -1,105 +1,52 @@
-use anyhow::Result;
-use docx_rs::*;
-use serde::{Deserialize, Serialize};
+// Word 文档渲染（2-1 节 stub，完整实现在 3-2 节）
+//
+// 底层使用 docx-rs 库，纯 Rust 生成 .docx 文件。
+// 完整实现包含：标题/段落/列表/表格的渲染逻辑，以及文件 ZIP 打包。
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DocSection {
-    pub heading: String,
-    #[serde(default = "default_level")]
-    pub heading_level: u32,
-    #[serde(default)]
-    pub paragraphs: Vec<String>,
-    #[serde(default)]
-    pub bullets: Vec<String>,
-    #[serde(default)]
-    pub table: Option<DocTable>,
-}
+use std::io::Write;
+use std::path::Path;
+use serde::Deserialize;
 
-fn default_level() -> u32 {
-    1
-}
+// ─── 数据类型（与 doc_export.rs 耦合，完整实现见 3-2 节） ─────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DocTable {
-    pub headers: Vec<String>,
-    pub rows: Vec<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct DocData {
     pub title: String,
     pub sections: Vec<DocSection>,
 }
 
-/// 渲染 DOCX 文件，返回文件路径
-pub fn render_docx(data: &DocData, output_path: &std::path::Path) -> Result<()> {
-    let mut doc = Docx::new();
-
-    // 标题
-    doc = doc
-        .add_paragraph(Paragraph::new().add_run(Run::new().add_text(&data.title).bold().size(56)));
-
-    for section in &data.sections {
-        let heading_size = match section.heading_level {
-            1 => 36,
-            2 => 30,
-            _ => 26,
-        };
-        doc = doc.add_paragraph(
-            Paragraph::new().add_run(
-                Run::new()
-                    .add_text(&section.heading)
-                    .bold()
-                    .size(heading_size),
-            ),
-        );
-
-        for para in &section.paragraphs {
-            let cleaned = strip_markdown(para);
-            doc =
-                doc.add_paragraph(Paragraph::new().add_run(Run::new().add_text(&cleaned).size(22)));
-        }
-
-        for bullet in &section.bullets {
-            let cleaned = strip_markdown(bullet);
-            doc = doc.add_paragraph(
-                Paragraph::new().add_run(Run::new().add_text(format!("• {cleaned}")).size(22)),
-            );
-        }
-
-        if let Some(table) = &section.table {
-            if !table.headers.is_empty() {
-                // 构建表头行
-                let mut header_cells: Vec<TableCell> = Vec::new();
-                for header in &table.headers {
-                    header_cells.push(TableCell::new().add_paragraph(
-                        Paragraph::new().add_run(Run::new().add_text(header).bold().size(20)),
-                    ));
-                }
-                let mut rows: Vec<TableRow> = vec![TableRow::new(header_cells)];
-
-                // 数据行
-                for row in &table.rows {
-                    let mut cells: Vec<TableCell> = Vec::new();
-                    for cell in row {
-                        cells.push(TableCell::new().add_paragraph(
-                            Paragraph::new().add_run(Run::new().add_text(cell).size(20)),
-                        ));
-                    }
-                    rows.push(TableRow::new(cells));
-                }
-
-                let docx_table = Table::new(rows);
-                doc = doc.add_table(docx_table);
-            }
-        }
-    }
-
-    let file = std::fs::File::create(output_path)?;
-    doc.build().pack(file)?;
-    Ok(())
+#[derive(Deserialize)]
+pub struct DocSection {
+    pub heading: String,
+    pub heading_level: i32,
+    pub paragraphs: Vec<String>,
+    pub bullets: Vec<String>,
+    pub table: Option<DocTable>,
 }
 
-fn strip_markdown(text: &str) -> String {
-    text.replace("**", "").replace('*', "")
+#[derive(Deserialize)]
+pub struct DocTable {
+    pub headers: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+// ─── 渲染函数（2-1 stub） ────────────────────────────────────────────────────
+
+/// 渲染 Word 文档（2-1 节暂不实现，输出空文件）
+pub fn render_docx(data: &DocData, path: &Path) -> anyhow::Result<()> {
+    // 完整实现在 3-2 节：
+    // 1. 用 docx-rs 构建 document.xml
+    // 2. 写入 ZIP 包（[Content_Types].xml / _rels/.rels / word/document.xml 等部件）
+    // 3. 返回文件路径
+    tracing::warn!(
+        "render_docx stub: {} ({} sections), real impl in 3-2",
+        data.title,
+        data.sections.len()
+    );
+    // 写一个空文件占位
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::File::create(path)?.write_all(b"")?;
+    Ok(())
 }

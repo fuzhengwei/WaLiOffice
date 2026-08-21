@@ -1,55 +1,16 @@
-pub mod agnes_media;
-pub mod chart_generate;
-pub mod doc_generate;
-pub mod drawio_generate;
-pub mod image_prompt;
-pub mod local_video;
-pub mod md_generate;
-pub mod ppt_generate;
-pub mod ppt_plan;
-pub mod sheet_generate;
-pub mod video_generate;
-pub mod web_search;
+// 工具注册表（2-1 节 stub，完整实现在 2-4 节）
+//
+// 完整实现见 2-4 节「工具 Trait 与注册表」：
+// - OfficeTool trait：name/description/parameters/call
+// - ToolRegistry：RwLock<HashMap<String, Arc<dyn OfficeTool>>
+// - register_all_tools()：遍历 tools/ 目录注册 10 个工具
 
-use super::registry::REGISTRY;
-use std::sync::Arc;
-
+/// 注册所有 Agent 工具（2-1 节暂不注册，完整实现见 2-4 节）
 pub async fn register_all_tools() {
-    REGISTRY.register(Arc::new(ppt_plan::PptPlanTool)).await;
-    REGISTRY
-        .register(Arc::new(ppt_generate::PptGenerateTool))
-        .await;
-    REGISTRY
-        .register(Arc::new(doc_generate::DocGenerateTool))
-        .await;
-    REGISTRY
-        .register(Arc::new(md_generate::MarkdownGenerateTool))
-        .await;
-    REGISTRY
-        .register(Arc::new(sheet_generate::SheetGenerateTool))
-        .await;
-    REGISTRY
-        .register(Arc::new(chart_generate::ChartGenerateTool))
-        .await;
-    REGISTRY
-        .register(Arc::new(drawio_generate::DrawioGenerateTool))
-        .await;
-    REGISTRY
-        .register(Arc::new(image_prompt::ImagePromptTool))
-        .await;
-    REGISTRY
-        .register(Arc::new(video_generate::VideoGenerateTool))
-        .await;
-    REGISTRY.register(Arc::new(web_search::WebSearchTool)).await;
-
-    let tools = REGISTRY.list().await;
-    tracing::info!(
-        "[AgentTools] 已注册 {} 个工具: {}",
-        tools.len(),
-        tools
-            .iter()
-            .map(|t| t.name())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    // 完整实现：
+    // REGISTRY.register(Arc::new(PptPlanTool::new())).await;
+    // REGISTRY.register(Arc::new(PptGenerateTool::new())).await;
+    // ... 共 10 个工具
+    // tracing::info!("📦 已注册 X 个工具");
+    tracing::info!("📦 Agent 工具注册表已就绪（工具实现在第 2-4 节接入）");
 }
