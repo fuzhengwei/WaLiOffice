@@ -67,8 +67,6 @@ services:
       AIPPT_WEB_SEARCH_PROVIDER: auto
       AIPPT_WEB_SEARCH_ENDPOINT: http://127.0.0.1:8080
       AIPPT_WEB_SEARCH_TIMEOUT_MS: 20000
-      AIPPT_BAIDU_MCP_API_KEY: "申请你的key https://console.bce.baidu.com/iam/?_=1753597622044#/iam/apikey/list"
-      AIPPT_BAIDU_MCP_SSE_ENDPOINT: http://appbuilder.baidu.com/v2/ai_search/mcp/sse
 
       # ── 数据目录（容器内路径，不要改）──
       AIPPT_DATA_DIR: data

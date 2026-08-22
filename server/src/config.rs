@@ -36,8 +36,6 @@ pub struct Config {
     pub web_search_provider: String,
     pub web_search_endpoint: String,
     pub web_search_timeout_ms: u64,
-    pub baidu_mcp_api_key: String,
-    pub baidu_mcp_sse_endpoint: String,
 
     pub data_dir: String,
     pub projects_dir: String,
@@ -161,11 +159,6 @@ impl Config {
             web_search_timeout_ms: env_or("AIPPT_WEB_SEARCH_TIMEOUT_MS", "20000")
                 .parse()
                 .unwrap_or(20_000),
-            baidu_mcp_api_key: env_or("AIPPT_BAIDU_MCP_API_KEY", ""),
-            baidu_mcp_sse_endpoint: env_or(
-                "AIPPT_BAIDU_MCP_SSE_ENDPOINT",
-                "http://appbuilder.baidu.com/v2/ai_search/mcp/sse",
-            ),
 
             data_dir: data_dir.clone(),
             projects_dir: env_or("AIPPT_PROJECTS_DIR", "data/projects"),

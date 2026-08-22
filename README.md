@@ -14,7 +14,7 @@ WaLiOffice 将 AI Agent 能力与办公文档生成深度结合：用户在对�
 - **流程图生成**：输出 draw.io 格式 XML，支持在线编辑
 - **图片生成**：调用文生图模型，生成高质量图片
 - **视频生成**：调用文生视频模型，远程不可用时本地 `ffmpeg` 兜底合成 MP4
-- **联网搜索**：支持百度 MCP / SearXNG / DuckDuckGo 多搜索源，Agent 可主动检索实时信息
+- **联网搜索**：支持 SearXNG / DuckDuckGo 多搜索源，Agent 可主动检索实时信息
 - **文件解析**：支持上传文件内容提取与 OCR 识别，作为对话上下文
 - **多模型切换**：文本 / 图片 / 视频各自独立配置模型列表，前端设置页可实时切换
 - **用户认证**：JWT 认证 + 公众号验证码登录，支持注册和登录验证码
@@ -269,7 +269,7 @@ Dockerfile 采用三阶段构建：
 | `LLM_VIDEO_BASE_URL` | ✅ | — | 视频模型 API 地址 |
 | `LLM_VIDEO_API_KEY` | ✅ | — | 视频模型 API Key |
 | `LLM_VIDEO_MODELS` | ✅ | — | 可用视频模型列表 |
-| `AIPPT_WEB_SEARCH_PROVIDER` | ❌ | `auto` | 搜索源：`auto` / `baidu_mcp` / `searxng` / `duckduckgo` |
+| `AIPPT_WEB_SEARCH_PROVIDER` | ❌ | `auto` | 搜索源：`auto` / `searxng` / `duckduckgo` |
 | `AIPPT_CORS_ORIGINS` | ❌ | — | CORS 允许来源（逗号分隔） |
 | `AIPPT_DATA_DIR` | ❌ | `data` | 数据存储目录 |
 

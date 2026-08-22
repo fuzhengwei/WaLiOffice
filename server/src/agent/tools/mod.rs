@@ -9,7 +9,7 @@ pub mod ppt_generate;
 pub mod ppt_plan;
 pub mod sheet_generate;
 pub mod video_generate;
-pub mod web_search;
+pub mod web_search_generic;
 
 use super::registry::REGISTRY;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ pub async fn register_all_tools() {
     REGISTRY
         .register(Arc::new(video_generate::VideoGenerateTool))
         .await;
-    REGISTRY.register(Arc::new(web_search::WebSearchTool)).await;
+    REGISTRY.register(Arc::new(web_search_generic::WebSearchTool)).await;
 
     let tools = REGISTRY.list().await;
     tracing::info!(

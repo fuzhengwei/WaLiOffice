@@ -67,30 +67,7 @@ fn configured_models(cfg: &crate::config::Config) -> Vec<String> {
 }
 
 fn builtin_mcp_servers() -> Vec<McpServerConfig> {
-    let cfg = crate::config::config();
-    if cfg.baidu_mcp_api_key.trim().is_empty() {
-        return vec![];
-    }
-
-    let base = cfg.baidu_mcp_sse_endpoint.trim();
-    let endpoint = if base.contains("api_key=") {
-        base.to_string()
-    } else {
-        format!(
-            "{}?api_key={}",
-            base.trim_end_matches('/'),
-            urlencoding::encode(cfg.baidu_mcp_api_key.trim()),
-        )
-    };
-
-    vec![McpServerConfig {
-        id: "builtin-baidu-ai-search".into(),
-        name: "百度 AI Search MCP".into(),
-        transport: "sse".into(),
-        endpoint,
-        enabled: true,
-        description: Some("内置中文搜索增强服务，适合人名、项目名、技术资料和公开网页检索。部署到你自己的环境时，需要在 .env 中配置百度 MCP Key 才会启用。".into()),
-    }]
+    vec![]
 }
 
 pub fn normalize_settings(mut settings: AppSettings) -> Result<AppSettings, AppError> {
@@ -425,7 +402,11 @@ async fn test_sse_mcp_service(
                 break if ev.data.starts_with("http://") || ev.data.starts_with("https://") {
                     ev.data
                 } else {
-                    format!("http://appbuilder.baidu.com{}", ev.data)
+                    return Ok(Json(json!({
+                        "ok": false,
+                        "message": "MCP SSE 服务返回了非绝对 endpoint",
+                        "tools": []
+                    })));
                 };
             }
             Ok(_) => {}
