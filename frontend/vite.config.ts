@@ -29,6 +29,23 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       emptyOutDir: true,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'echarts': ['echarts/core', 'echarts/charts', 'echarts/components', 'echarts/renderers'],
+            'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+            'radix-ui': [
+              '@radix-ui/react-dialog',
+              '@radix-ui/react-dropdown-menu',
+              '@radix-ui/react-scroll-area',
+              '@radix-ui/react-separator',
+              '@radix-ui/react-slot',
+              '@radix-ui/react-tooltip',
+            ],
+            'markdown': ['react-markdown', 'remark-gfm', 'react-syntax-highlighter'],
+          },
+        },
+      },
     },
   }
 })

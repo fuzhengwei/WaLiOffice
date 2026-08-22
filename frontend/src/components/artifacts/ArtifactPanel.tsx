@@ -1,4 +1,4 @@
-import { Clapperboard, Code2, Download, Eye, GripVertical, Image, Layers3, Maximize2, Minimize2, PenTool, Pencil, Save, Sparkles } from 'lucide-react'
+import { Clapperboard, Code2, Download, Eye, GripVertical, Image, Layers3, Maximize2, Minimize2, MessageSquarePlus, PenTool, Pencil, Save, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -36,6 +36,7 @@ interface ArtifactPanelProps {
   onExportDocx: (artifact: Artifact) => void
   onExportMarkdown: (artifact: Artifact) => void
   onExportDrawio: (artifact: Artifact) => void
+  onInsertArtifact: (artifact: Artifact) => void
 }
 
 function createFallbackDrawioXml(title = '综合 Agent 工作台流程') {
@@ -167,7 +168,7 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
   )
 }
 
-function DocumentArtifact({ artifact, onExport }: { artifact: Artifact, onExport: () => void }) {
+function DocumentArtifact({ artifact, onExport, onInsert }: { artifact: Artifact, onExport: () => void, onInsert: () => void }) {
   const content = artifact.content || {}
   const isStructured = content.type === 'structured' && Array.isArray(content.sections) && content.sections.length > 0
   const [isExporting, setIsExporting] = useState(false)
@@ -195,6 +196,14 @@ function DocumentArtifact({ artifact, onExport }: { artifact: Artifact, onExport
         >
           <Download className="h-3.5 w-3.5" />{isExporting ? '导出中…' : '导出 DOCX'}
         </button>
+        <button
+          type="button"
+          onClick={onInsert}
+          className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-surface-700 hover:bg-surface-50"
+        >
+          <MessageSquarePlus className="h-3.5 w-3.5" />
+          引用到对话
+        </button>
       </div>
       {/* 预览区域 */}
       {isStructured ? (
@@ -208,7 +217,7 @@ function DocumentArtifact({ artifact, onExport }: { artifact: Artifact, onExport
   )
 }
 
-function MarkdownArtifact({ artifact, onExport }: { artifact: Artifact, onExport: () => void }) {
+function MarkdownArtifact({ artifact, onExport, onInsert }: { artifact: Artifact, onExport: () => void, onInsert: () => void }) {
   const [isExporting, setIsExporting] = useState(false)
   const markdown = artifact.content?.markdown || `# ${artifact.title || 'Markdown 文档'}\n\n暂无内容。`
 
@@ -228,13 +237,23 @@ function MarkdownArtifact({ artifact, onExport }: { artifact: Artifact, onExport
           <div className="text-sm font-semibold text-surface-800">{artifact.title || 'Markdown 文档'}</div>
           <div className="text-xs text-surface-400">Markdown 阅读视图 · 下载 MD</div>
         </div>
-        <button
-          className="inline-flex items-center gap-1 rounded-full bg-surface-950 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={isExporting}
-          onClick={handleExport}
-        >
-          <Download className="h-3.5 w-3.5" />{isExporting ? '下载中…' : '下载 MD'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onInsert}
+            className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-surface-700 hover:bg-surface-50"
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5" />
+            引用
+          </button>
+          <button
+            className="inline-flex items-center gap-1 rounded-full bg-surface-950 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isExporting}
+            onClick={handleExport}
+          >
+            <Download className="h-3.5 w-3.5" />{isExporting ? '下载中…' : '下载 MD'}
+          </button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto pb-4">
         <MarkdownPreview markdown={markdown} />
@@ -243,7 +262,7 @@ function MarkdownArtifact({ artifact, onExport }: { artifact: Artifact, onExport
   )
 }
 
-function DrawIoArtifact({ artifact, onUpdate }: { artifact: Artifact, onUpdate: (updates: Partial<Artifact>) => void }) {
+function DrawIoArtifact({ artifact, onUpdate, onInsert }: { artifact: Artifact, onUpdate: (updates: Partial<Artifact>) => void, onInsert: () => void }) {
   const ref = useRef<DrawIoEmbedRef>(null)
   const xml = artifact.content?.xml || createFallbackDrawioXml(artifact.title)
   const [mode, setMode] = useState<'preview' | 'edit'>('preview')
@@ -275,6 +294,13 @@ function DrawIoArtifact({ artifact, onUpdate }: { artifact: Artifact, onUpdate: 
               <Save className="h-3 w-3" />保存
             </button>
           )}
+          <button
+            type="button"
+            onClick={onInsert}
+            className="inline-flex items-center gap-1 rounded-full border border-surface-200 bg-white px-2 py-1 text-surface-600 hover:bg-surface-50"
+          >
+            <MessageSquarePlus className="h-3 w-3" />引用
+          </button>
         </div>
       </div>
       <div className="h-[calc(100%-44px)]">
@@ -311,7 +337,7 @@ function DrawIoArtifact({ artifact, onUpdate }: { artifact: Artifact, onUpdate: 
   )
 }
 
-function SheetArtifact({ artifact, onUpdate, onExport }: { artifact: Artifact, onUpdate: (updates: Partial<Artifact>) => void, onExport: () => void }) {
+function SheetArtifact({ artifact, onUpdate, onExport, onInsert }: { artifact: Artifact, onUpdate: (updates: Partial<Artifact>) => void, onExport: () => void, onInsert: () => void }) {
   const tables: Array<{ title?: string; headers?: string[]; rows?: string[][]; summary?: string }> =
     Array.isArray(artifact.content?.tables) && artifact.content.tables.length > 0
       ? artifact.content.tables
@@ -366,6 +392,13 @@ function SheetArtifact({ artifact, onUpdate, onExport }: { artifact: Artifact, o
         <span className="font-semibold">{artifact.title || '在线 Excel 工作区'}</span>
         <div className="flex items-center gap-2">
           <span>可编辑表格 / ExcelJS XLSX 导出</span>
+          <button
+            type="button"
+            onClick={onInsert}
+            className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-emerald-700 hover:bg-emerald-50"
+          >
+            <MessageSquarePlus className="h-3 w-3" />引用
+          </button>
           <button
             className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-1 text-white disabled:cursor-not-allowed disabled:opacity-60"
             disabled={isExporting}
@@ -442,7 +475,7 @@ function downloadFromUrl(url: string, filename: string) {
   link.remove()
 }
 
-function ImageArtifact({ artifact }: { artifact: Artifact }) {
+function ImageArtifact({ artifact, onInsert }: { artifact: Artifact, onInsert: () => void }) {
   const prompt = artifact.content?.prompt || '等待图象 Agent 生成提示词或图片。'
   const images: string[] = artifact.content?.images || []
   const variants: Array<{ style?: string; prompt?: string; url?: string }> = artifact.content?.variants || artifact.content?.data?.prompts || []
@@ -471,14 +504,24 @@ function ImageArtifact({ artifact }: { artifact: Artifact }) {
               >
                 <img src={src} className="aspect-video w-full rounded-3xl border border-surface-200 object-cover" />
               </button>
-              <button
-                type="button"
-                onClick={() => downloadFromUrl(src, `${artifact.title || 'image'}-${index + 1}.png`)}
-                className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-surface-700 hover:bg-surface-50"
-              >
-                <Download className="h-3.5 w-3.5" />
-                下载图片
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onInsert()}
+                  className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-surface-700 hover:bg-surface-50"
+                >
+                  <MessageSquarePlus className="h-3.5 w-3.5" />
+                  引用
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadFromUrl(src, `${artifact.title || 'image'}-${index + 1}.png`)}
+                  className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-surface-700 hover:bg-surface-50"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  下载
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -531,14 +574,48 @@ function ImageArtifact({ artifact }: { artifact: Artifact }) {
   )
 }
 
-function VideoArtifact({ artifact }: { artifact: Artifact }) {
+function VideoArtifact({ artifact, onInsert }: { artifact: Artifact, onInsert: () => void }) {
   const videoUrl = artifact.content?.video_url || ''
   const prompt = artifact.content?.prompt || '等待视频 Agent 生成镜头脚本。'
+  const shots = artifact.content?.shots as Array<{
+    index: number; title: string; description: string;
+    prompt: string; mode: string; seconds: number;
+    first_frame?: string | null; last_frame?: string | null;
+    reference_images?: string[]; transition?: string | null;
+  }> | undefined
+  const isStoryboard = !videoUrl && shots && shots.length > 0
   return (
     <div className="w-full max-w-3xl space-y-4">
       {videoUrl ? (
         <div className="overflow-hidden rounded-3xl border border-surface-200 bg-black shadow-sm">
           <video src={videoUrl} controls className="aspect-video w-full bg-black" />
+        </div>
+      ) : isStoryboard ? (
+        <div className="rounded-3xl border border-surface-200 bg-gradient-to-br from-violet-50 via-white to-sky-50 p-6">
+          <div className="mb-4 flex items-center gap-2">
+            <Clapperboard className="h-5 w-5 text-violet-500" />
+            <span className="text-sm font-semibold text-surface-700">分镜方案 · {shots.length} 个镜头 · 约 {artifact.content?.total_seconds || 0}s</span>
+          </div>
+          <div className="space-y-3">
+            {shots.map((shot) => (
+              <div key={shot.index} className="rounded-2xl border border-surface-200 bg-white p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-surface-900">镜头{shot.index}：{shot.title}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-600">{shot.mode}</span>
+                    <span className="rounded-full bg-surface-50 px-2.5 py-1 text-xs font-medium text-surface-500">{shot.seconds}s</span>
+                  </div>
+                </div>
+                <p className="mb-2 text-sm leading-6 text-surface-600">{shot.description}</p>
+                <div className="rounded-lg bg-surface-50 px-3 py-2 text-xs leading-5 text-surface-500">
+                  <span className="font-medium text-surface-400">Prompt: </span>{shot.prompt}
+                </div>
+                {shot.transition && (
+                  <div className="mt-2 text-xs text-surface-400">→ 转场：{shot.transition}</div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="aspect-video rounded-3xl border border-surface-200 bg-gradient-to-br from-rose-100 via-white to-orange-100 flex items-center justify-center text-surface-400">
@@ -546,6 +623,14 @@ function VideoArtifact({ artifact }: { artifact: Artifact }) {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onInsert}
+          className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-surface-700 hover:bg-surface-50"
+        >
+          <MessageSquarePlus className="h-3.5 w-3.5" />
+          引用到对话
+        </button>
         {videoUrl && (
           <button
             type="button"
@@ -572,10 +657,12 @@ function VideoArtifact({ artifact }: { artifact: Artifact }) {
           远程视频服务暂不可用，已改用本地 MP4 合成。原因：{artifact.content.fallback_reason}
         </div>
       )}
-      <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">
-        <div className="mb-1 text-xs font-semibold text-surface-400">视频提示词</div>
-        {prompt}
-      </div>
+      {!isStoryboard && (
+        <div className="rounded-2xl border border-surface-200 bg-white p-4 text-sm leading-7 text-surface-600">
+          <div className="mb-1 text-xs font-semibold text-surface-400">视频提示词</div>
+          {prompt}
+        </div>
+      )}
     </div>
   )
 }
@@ -711,14 +798,14 @@ function MixedArtifact({ artifact }: { artifact: Artifact }) {
   )
 }
 
-function ArtifactBody({ artifact, activeTool, onUpdate, onExportExcel, onExportDocx, onExportMarkdown }: { artifact: Artifact | null, activeTool: ToolKind, onUpdate: (id: string, updates: Partial<Artifact>) => void, onExportExcel: (artifact: Artifact) => void, onExportDocx: (artifact: Artifact) => void, onExportMarkdown: (artifact: Artifact) => void }) {
+function ArtifactBody({ artifact, activeTool, onUpdate, onExportExcel, onExportDocx, onExportMarkdown, onInsertArtifact }: { artifact: Artifact | null, activeTool: ToolKind, onUpdate: (id: string, updates: Partial<Artifact>) => void, onExportExcel: (artifact: Artifact) => void, onExportDocx: (artifact: Artifact) => void, onExportMarkdown: (artifact: Artifact) => void, onInsertArtifact: (artifact: Artifact) => void }) {
   if (!artifact) return <EmptyArtifact activeTool={activeTool} />
-  if (artifact.kind === 'document') return <DocumentArtifact artifact={artifact} onExport={() => onExportDocx(artifact)} />
-  if (artifact.kind === 'markdown') return <MarkdownArtifact artifact={artifact} onExport={() => onExportMarkdown(artifact)} />
-  if (artifact.kind === 'drawio') return <DrawIoArtifact artifact={artifact} onUpdate={(updates) => onUpdate(artifact.id, updates)} />
-  if (artifact.kind === 'sheet') return <SheetArtifact artifact={artifact} onUpdate={(updates) => onUpdate(artifact.id, updates)} onExport={() => onExportExcel(artifact)} />
-  if (artifact.kind === 'image') return <ImageArtifact artifact={artifact} />
-  if (artifact.kind === 'video') return <VideoArtifact artifact={artifact} />
+  if (artifact.kind === 'document') return <DocumentArtifact artifact={artifact} onExport={() => onExportDocx(artifact)} onInsert={() => onInsertArtifact(artifact)} />
+  if (artifact.kind === 'markdown') return <MarkdownArtifact artifact={artifact} onExport={() => onExportMarkdown(artifact)} onInsert={() => onInsertArtifact(artifact)} />
+  if (artifact.kind === 'drawio') return <DrawIoArtifact artifact={artifact} onUpdate={(updates) => onUpdate(artifact.id, updates)} onInsert={() => onInsertArtifact(artifact)} />
+  if (artifact.kind === 'sheet') return <SheetArtifact artifact={artifact} onUpdate={(updates) => onUpdate(artifact.id, updates)} onExport={() => onExportExcel(artifact)} onInsert={() => onInsertArtifact(artifact)} />
+  if (artifact.kind === 'image') return <ImageArtifact artifact={artifact} onInsert={() => onInsertArtifact(artifact)} />
+  if (artifact.kind === 'video') return <VideoArtifact artifact={artifact} onInsert={() => onInsertArtifact(artifact)} />
   if (artifact.kind === 'chart') return <ChartArtifact artifact={artifact} />
   if (artifact.kind === 'search') return <SearchArtifact artifact={artifact} />
   if (artifact.kind === 'code') return <CodeArtifact artifact={artifact} />
@@ -749,6 +836,7 @@ export function ArtifactPanel({
   onExportDocx,
   onExportMarkdown,
   onExportDrawio,
+  onInsertArtifact,
 }: ArtifactPanelProps) {
   const [panelWidth, setPanelWidth] = useState(isWide ? 760 : 560)
   const draggingRef = useRef(false)
@@ -923,7 +1011,7 @@ export function ArtifactPanel({
             {effectiveTool === 'ppt' ? (
               slides.length > 0 ? <SlidePreview slide={slides[currentSlideIndex]} layout="16x9" /> : <EmptyArtifact activeTool={effectiveTool} />
             ) : (
-              <ArtifactBody artifact={activeArtifact} activeTool={effectiveTool} onUpdate={onUpdateArtifact} onExportExcel={onExportExcel} onExportDocx={onExportDocx} onExportMarkdown={onExportMarkdown} />
+              <ArtifactBody artifact={activeArtifact} activeTool={effectiveTool} onUpdate={onUpdateArtifact} onExportExcel={onExportExcel} onExportDocx={onExportDocx} onExportMarkdown={onExportMarkdown} onInsertArtifact={onInsertArtifact} />
             )}
           </div>
         </div>

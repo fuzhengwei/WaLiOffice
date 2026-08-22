@@ -174,7 +174,7 @@ fn build_user_message(req: &ChatRequest) -> String {
 fn allowed_tools_for_kind(tool_kind: Option<&str>) -> Option<Vec<String>> {
     match tool_kind {
         Some("image") => Some(vec!["image_prompt".to_string()]),
-        Some("video") => Some(vec!["video_generate".to_string()]),
+        Some("video") => Some(vec!["video_generate".to_string(), "video_storyboard".to_string()]),
         _ => None,
     }
 }
@@ -950,7 +950,7 @@ async fn chat_stream(
     };
 
     let agent_config = AgentConfig {
-        max_turns: 6,
+        max_turns: 10,
         system_prompt,
         allowed_tools,
     };
@@ -968,7 +968,9 @@ async fn chat_stream(
         req.model.clone(),
         req.attachments.clone().unwrap_or_default(),
         emit,
-    ).with_tool_config(req.tool_config.clone().unwrap_or(serde_json::json!({})));
+    )
+    .with_tool_config(req.tool_config.clone().unwrap_or(serde_json::json!({})))
+    .with_prior_artifacts(existing_artifacts.clone());
 
     let session_id_for_save = session_id.clone();
     let pool_for_save = pool.clone();

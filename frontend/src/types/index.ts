@@ -15,6 +15,21 @@ export interface ChatAttachment {
   width?: number;
   height?: number;
   compressed?: boolean;
+  from_artifact?: boolean;
+}
+
+/** @ 引用产物的标签（输入框内显示为 chip） */
+export interface InputRef {
+  id: string;
+  artifactId: string;
+  kind: ArtifactKind;
+  title: string;
+  /** 发送时拼接的引用文本 */
+  refText: string;
+  /** 来源会话 ID（当前会话或历史会话） */
+  sessionId?: string;
+  /** 产物内容摘要（发送时传给后端，让 AI 识别引用内容） */
+  contentSummary?: string;
 }
 
 export interface LLMProfile {
@@ -199,6 +214,8 @@ export interface ChatMessage {
   action?: string;
   slide_id?: string;
   attachments?: ChatAttachment[];
+  /** 用户消息引用的产物标签 */
+  inputRefs?: InputRef[];
 }
 
 // ===== 用户 =====
