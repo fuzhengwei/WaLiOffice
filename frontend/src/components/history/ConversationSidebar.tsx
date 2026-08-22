@@ -1,4 +1,4 @@
-import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Github, Image, LayoutDashboard, LogOut, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Sheet, Sparkles, Trash2 } from 'lucide-react'
+import { Bot, BrainCircuit, ChevronDown, Clapperboard, Edit3, FileText, Folder, Github, Image, LayoutDashboard, LogOut, MessageSquare, MoreHorizontal, PenTool, Plus, Search, Sheet, Sparkles, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, DragEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -34,6 +34,7 @@ interface ConversationSidebarProps {
   onSearchQueryChange?: (query: string) => void
   width?: number
   onResizeStart?: (event: React.PointerEvent<HTMLDivElement>) => void
+  onMobileClose?: () => void
 }
 
 const iconMap: Record<ToolKind, any> = {
@@ -121,6 +122,7 @@ export function ConversationSidebar({
   onSearchQueryChange,
   width,
   onResizeStart,
+  onMobileClose,
 }: ConversationSidebarProps) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -451,6 +453,17 @@ export function ConversationSidebar({
             <div className="truncate text-base font-black tracking-tight text-surface-950">WaLiOffice</div>
             <div className="mt-0.5 truncate text-[11px] font-semibold text-surface-400">办公创作空间</div>
           </div>
+          {/* 移动端关闭按钮 */}
+          {onMobileClose && (
+            <button
+              type="button"
+              onClick={onMobileClose}
+              className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/60 text-surface-500 transition hover:bg-white/90 hover:text-surface-900 md:hidden"
+              aria-label="关闭菜单"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          )}
         </div>
 
         <div className="flex h-10 items-center gap-2 rounded-full border border-black/[0.04] bg-white/82 px-3.5 text-sm text-surface-500 shadow-sm backdrop-blur transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-surface-950/8">

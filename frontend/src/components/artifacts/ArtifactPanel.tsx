@@ -37,6 +37,7 @@ interface ArtifactPanelProps {
   onExportMarkdown: (artifact: Artifact) => void
   onExportDrawio: (artifact: Artifact) => void
   onInsertArtifact: (artifact: Artifact) => void
+  isMobile?: boolean
 }
 
 function createFallbackDrawioXml(title = '综合 Agent 工作台流程') {
@@ -837,6 +838,7 @@ export function ArtifactPanel({
   onExportMarkdown,
   onExportDrawio,
   onInsertArtifact,
+  isMobile,
 }: ArtifactPanelProps) {
   const [panelWidth, setPanelWidth] = useState(isWide ? 760 : 560)
   const draggingRef = useRef(false)
@@ -884,6 +886,92 @@ export function ArtifactPanel({
   const effectiveTool = activeArtifact?.tool_kind || activeTool
   const headerTitle = activeArtifact?.title || titleMap[effectiveTool] || '成果展示'
   const canExportActiveArtifact = activeArtifact?.kind === 'document' || activeArtifact?.kind === 'markdown' || activeArtifact?.kind === 'sheet' || activeArtifact?.kind === 'drawio'
+
+  // 移动端全屏覆盖模式
+  if (isMobile) {
+    return (
+      <div className="flex h-full w-full flex-col bg-white">
+        {/* 移动端顶栏 */}
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-surface-100 bg-white/90 px-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
+              <Layers3 className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-surface-800">{headerTitle}</div>
+              {activeArtifactTurn && <div className="truncate text-[11px] text-surface-400">{activeArtifactTurn.title}</div>}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {effectiveTool === 'ppt' && (
+              <>
+                <button className="btn-secondary h-8 px-2.5 text-xs" disabled={!project} onClick={onPresent}>演示</button>
+                <button className="btn-secondary h-8 px-2.5 text-xs" disabled={!project} onClick={onExportPpt}><Download className="h-3.5 w-3.5" /></button>
+              </>
+            )}
+            {canExportActiveArtifact && activeArtifact?.kind === 'document' && (
+              <button className="btn-secondary h-8 px-2.5 text-xs" onClick={() => onExportDocx(activeArtifact)}><Download className="h-3.5 w-3.5" /></button>
+            )}
+            {canExportActiveArtifact && activeArtifact?.kind === 'markdown' && (
+              <button className="btn-secondary h-8 px-2.5 text-xs" onClick={() => onExportMarkdown(activeArtifact)}><Download className="h-3.5 w-3.5" /></button>
+            )}
+            {canExportActiveArtifact && activeArtifact?.kind === 'sheet' && (
+              <button className="btn-secondary h-8 px-2.5 text-xs" onClick={() => onExportExcel(activeArtifact)}><Download className="h-3.5 w-3.5" /></button>
+            )}
+            {canExportActiveArtifact && activeArtifact?.kind === 'drawio' && (
+              <button className="btn-secondary h-8 px-2.5 text-xs" onClick={() => onExportDrawio(activeArtifact)}><Download className="h-3.5 w-3.5" /></button>
+            )}
+            <button className="btn-ghost h-8 px-2" onClick={() => onOpenChange(false)} title="关闭">关闭</button>
+          </div>
+        </div>
+
+        {/* 产物切换区 */}
+        {artifacts.length > 0 && (
+          <div className="shrink-0 border-b border-surface-100 bg-white/80 px-3 py-2">
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {artifactTurnGroups.map((group) =>
+                group.artifacts.map((artifact) => (
+                  <button
+                    key={artifact.id}
+                    onClick={() => onSelectArtifact(artifact.id)}
+                    className={`shrink-0 rounded-full px-3 py-1 text-xs ${activeArtifact?.id === artifact.id ? 'bg-primary-600 text-white' : 'bg-white text-surface-500 hover:bg-surface-200'}`}
+                    title={artifact.title}
+                  >
+                    {(artifactKindLabel[artifact.kind] || artifact.kind)} · {artifact.title.slice(0, 12)}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* PPT 生成进度 */}
+        {effectiveTool === 'ppt' && isGeneratingPpt && pptProgress && pptProgress.total > 0 && (
+          <div className="shrink-0 border-b border-surface-200 bg-amber-50/80 px-4 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-medium text-amber-900">生成中 {pptProgress.current}/{pptProgress.total}</div>
+              <div className="text-xs text-amber-700">已生成 {slides.length} 页</div>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-amber-100">
+              <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${Math.max(6, Math.min(100, (pptProgress.current / pptProgress.total) * 100))}%` }} />
+            </div>
+          </div>
+        )}
+
+        {/* 内容区 */}
+        <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
+          {effectiveTool === 'ppt' && <Toolbar />}
+          <div className={`flex-1 overflow-auto flex ${effectiveTool === 'ppt' ? 'items-center justify-center p-2' : 'items-start justify-center p-3'}`}>
+            {effectiveTool === 'ppt' ? (
+              slides.length > 0 ? <SlidePreview slide={slides[currentSlideIndex]} layout="16x9" /> : <EmptyArtifact activeTool={effectiveTool} />
+            ) : (
+              <ArtifactBody artifact={activeArtifact} activeTool={effectiveTool} onUpdate={onUpdateArtifact} onExportExcel={onExportExcel} onExportDocx={onExportDocx} onExportMarkdown={onExportMarkdown} onInsertArtifact={onInsertArtifact} />
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <aside

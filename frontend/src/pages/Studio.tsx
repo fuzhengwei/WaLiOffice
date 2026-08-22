@@ -9,7 +9,7 @@ import { SlidePreview } from '@/components/preview/SlidePreview'
 import { ConversationSidebar } from '@/components/history/ConversationSidebar'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
-import { AlertCircle, CheckCircle2, Info, Play, X, PanelRightClose, PanelRight, Files } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Info, Play, X, PanelRightClose, PanelRight, Files, Menu } from 'lucide-react'
 import type { AppSettings, Artifact, ChatAttachment, ConversationRecord, InputRef, LLMProfile, PersistedSession, ProjectMeta, ToolKind, ToolConfigMap } from '@/types'
 import { extractArtifactSummary } from '@/lib/artifact-summary'
 const LOGO_URL = '/logo.png'
@@ -188,6 +188,7 @@ export default function Studio() {
   const [historyArtifactsLoading, setHistoryArtifactsLoading] = useState(false)
   const [toolConfig, setToolConfig] = useState<ToolConfigMap>({})
   const [sidebarWidth, setSidebarWidth] = useState(getStoredSidebarWidth)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [toast, setToast] = useState<ToastState | null>(null)
   // 每个 tab 的本地 UI 状态（与 store 中的对话状态分离）
   const [tabUiState, setTabUiState] = useState<Record<string, { input: string; attachments: ChatAttachment[]; inputRefs: InputRef[]; streamStatus: string; streamPhase: typeof streamPhase; processLogs: string[]; activeTool: ToolKind; activeProjectId: string | null; selectedTheme: string; toolConfig: ToolConfigMap; showArtifactPanel: boolean; pptProgress: { current: number; total: number } | null; followLatestSlide: boolean }>>({})
@@ -1722,65 +1723,118 @@ export default function Studio() {
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_12%,rgba(255,255,255,0.92),transparent_32%),radial-gradient(circle_at_78%_8%,rgba(226,232,240,0.72),transparent_30%),linear-gradient(135deg,#f7f2e8_0%,#f3f1eb_45%,#ece7dc_100%)]" />
 
       <div className="relative z-10 flex h-full overflow-hidden">
-        <ConversationSidebar
-          project={project}
-          messages={messages}
-          conversations={conversations}
-          projects={projects}
-          activeProjectId={activeProjectId}
-          userName={useAuthStore.getState().user?.username}
-          activeTool={activeTool}
-          activeConversationId={sessionId}
-          isStreaming={isStreaming}
-          streamPhase={streamPhase}
-          localTabs={conversationTabs.map((t) => ({ id: t.id, title: t.title, tool: t.tool, messageCount: t.messageCount, isStreaming: t.isStreaming, streamPhase: t.streamPhase, sessionId: tabs[t.id]?.sessionId }))}
-          activeTabId={activeTabId}
-          onSelectTab={handleSelectTab}
-          onToolChange={handleToolChange}
-          onSelectConversation={handleSelectConversation}
-          onSelectProject={handleSelectProject}
-          onNewConversation={handleNewTab}
-          onRenameConversation={handleRenameConversation}
-          onDeleteConversation={handleDeleteConversation}
-          onMoveConversation={handleMoveConversation}
-          onDeleteProject={handleDeleteProject}
-          onLogout={handleLogout}
-          searchQuery={conversationQuery}
-          onSearchQueryChange={setConversationQuery}
-          width={sidebarWidth}
-          onResizeStart={handleSidebarResizeStart}
-        />
+        {/* 桌面端侧边栏（md 以上显示） */}
+        <div className="hidden md:flex h-full">
+          <ConversationSidebar
+            project={project}
+            messages={messages}
+            conversations={conversations}
+            projects={projects}
+            activeProjectId={activeProjectId}
+            userName={useAuthStore.getState().user?.username}
+            activeTool={activeTool}
+            activeConversationId={sessionId}
+            isStreaming={isStreaming}
+            streamPhase={streamPhase}
+            localTabs={conversationTabs.map((t) => ({ id: t.id, title: t.title, tool: t.tool, messageCount: t.messageCount, isStreaming: t.isStreaming, streamPhase: t.streamPhase, sessionId: tabs[t.id]?.sessionId }))}
+            activeTabId={activeTabId}
+            onSelectTab={handleSelectTab}
+            onToolChange={handleToolChange}
+            onSelectConversation={handleSelectConversation}
+            onSelectProject={handleSelectProject}
+            onNewConversation={handleNewTab}
+            onRenameConversation={handleRenameConversation}
+            onDeleteConversation={handleDeleteConversation}
+            onMoveConversation={handleMoveConversation}
+            onDeleteProject={handleDeleteProject}
+            onLogout={handleLogout}
+            searchQuery={conversationQuery}
+            onSearchQueryChange={setConversationQuery}
+            width={sidebarWidth}
+            onResizeStart={handleSidebarResizeStart}
+          />
+        </div>
+
+        {/* 移动端侧边栏抽屉（md 以下，Overlay 模式） */}
+        {mobileSidebarOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <div
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              onClick={() => setMobileSidebarOpen(false)}
+            />
+            <div className="absolute inset-y-0 left-0 w-[85vw] max-w-[360px] shadow-2xl">
+              <ConversationSidebar
+                project={project}
+                messages={messages}
+                conversations={conversations}
+                projects={projects}
+                activeProjectId={activeProjectId}
+                userName={useAuthStore.getState().user?.username}
+                activeTool={activeTool}
+                activeConversationId={sessionId}
+                isStreaming={isStreaming}
+                streamPhase={streamPhase}
+                localTabs={conversationTabs.map((t) => ({ id: t.id, title: t.title, tool: t.tool, messageCount: t.messageCount, isStreaming: t.isStreaming, streamPhase: t.streamPhase, sessionId: tabs[t.id]?.sessionId }))}
+                activeTabId={activeTabId}
+                onSelectTab={(id) => { handleSelectTab(id); setMobileSidebarOpen(false) }}
+                onToolChange={handleToolChange}
+                onSelectConversation={(id) => { handleSelectConversation(id); setMobileSidebarOpen(false) }}
+                onSelectProject={(id) => { handleSelectProject(id); setMobileSidebarOpen(false) }}
+                onNewConversation={() => { handleNewTab(); setMobileSidebarOpen(false) }}
+                onRenameConversation={handleRenameConversation}
+                onDeleteConversation={handleDeleteConversation}
+                onMoveConversation={handleMoveConversation}
+                onDeleteProject={handleDeleteProject}
+                onLogout={handleLogout}
+                searchQuery={conversationQuery}
+                onSearchQueryChange={setConversationQuery}
+                width={360}
+                onMobileClose={() => setMobileSidebarOpen(false)}
+              />
+            </div>
+          </div>
+        )}
 
         <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="relative z-20 flex h-14 shrink-0 items-center justify-between border-b border-black/[0.05] bg-[#f6f4ef]/78 px-5 backdrop-blur-2xl">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-2xl bg-white/70 shadow-sm ring-1 ring-black/[0.04]">
+          <header className="relative z-20 flex h-14 shrink-0 items-center justify-between border-b border-black/[0.05] bg-[#f6f4ef]/78 px-3 backdrop-blur-2xl md:px-5">
+            <div className="flex min-w-0 items-center gap-2 md:gap-3">
+              {/* 移动端汉堡菜单 */}
+              <button
+                type="button"
+                onClick={() => setMobileSidebarOpen(true)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/60 text-surface-700 transition hover:bg-white/90 md:hidden"
+                title="打开菜单"
+                aria-label="打开菜单"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white/70 shadow-sm ring-1 ring-black/[0.04]">
                 <img src={LOGO_URL} alt="WaLiOffice logo" className="h-full w-full object-cover" />
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold tracking-tight text-surface-950">
                   {settings?.basic?.workspace_title || '智能办公助手'}
                 </div>
-                <div className="truncate text-[11px] text-surface-500">
+                <div className="hidden truncate text-[11px] text-surface-500 sm:block">
                   {settings?.basic?.brand_tagline || '分析 · 决策 · 绘制 · 流式反馈'}
                   {project ? ` · ${project.title}` : activeProjectId ? ` · ${projects.find(p => p.id === activeProjectId)?.title || ''}` : ''}
                 </div>
               </div>
             </div>
 
-            <div className="mx-4 min-w-0 flex-1" />
+            <div className="mx-2 min-w-0 flex-1 md:mx-4" />
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 md:gap-2">
               <button
                 onClick={() => navigate('/files')}
-                className="btn-ghost rounded-full bg-white/45 hover:bg-white/75"
+                className="btn-ghost shrink-0 rounded-full bg-white/45 hover:bg-white/75"
                 title="我的文件"
               >
                 <Files className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setShowArtifactPanel(!showArtifactPanel)}
-                className="btn-ghost rounded-full bg-white/45 hover:bg-white/75 disabled:cursor-not-allowed disabled:opacity-40"
+                className="btn-ghost shrink-0 rounded-full bg-white/45 hover:bg-white/75 disabled:cursor-not-allowed disabled:opacity-40"
                 title={hasRenderableArtifact ? '切换右侧成果展示' : '暂无成果可展示'}
                 disabled={!hasRenderableArtifact}
               >
@@ -1788,11 +1842,11 @@ export default function Studio() {
               </button>
               <button
                 onClick={() => setShowPresent(true)}
-                className="btn-secondary rounded-full bg-white/55"
+                className="btn-secondary shrink-0 rounded-full bg-white/55"
                 disabled={slides.length === 0}
               >
                 <Play className="w-4 h-4" />
-                演示
+                <span className="hidden sm:inline">演示</span>
               </button>
             </div>
           </header>
@@ -1847,32 +1901,67 @@ export default function Studio() {
           </div>
         </main>
 
+        {/* 桌面端产物面板（md 以上内联） */}
         {hasRenderableArtifact && (
-          <ArtifactPanel
-            activeTool={activeTool}
-            project={project}
-            slides={slides}
-            currentSlideIndex={currentSlideIndex}
-            isOpen={showArtifactPanel}
-            isWide={wideArtifactPanel}
-            onOpenChange={setShowArtifactPanel}
-            onWideChange={setWideArtifactPanel}
-            onSelectSlide={handleSelectSlide}
-            onExportPpt={handleExport}
-            onPresent={() => setShowPresent(true)}
-            messages={messages}
-            pptProgress={pptProgress}
-            isGeneratingPpt={isStreaming && activeTool === 'ppt'}
-            activeArtifact={activeArtifact}
-            artifacts={artifacts}
-            onSelectArtifact={setActiveArtifact}
-            onUpdateArtifact={updateArtifact}
-            onExportExcel={handleExportExcel}
-            onExportDocx={handleExportDocx}
-            onExportMarkdown={handleExportMarkdown}
-            onExportDrawio={handleExportDrawio}
-            onInsertArtifact={handleInsertArtifactToInput}
-          />
+          <div className="hidden md:flex h-full">
+            <ArtifactPanel
+              activeTool={activeTool}
+              project={project}
+              slides={slides}
+              currentSlideIndex={currentSlideIndex}
+              isOpen={showArtifactPanel}
+              isWide={wideArtifactPanel}
+              onOpenChange={setShowArtifactPanel}
+              onWideChange={setWideArtifactPanel}
+              onSelectSlide={handleSelectSlide}
+              onExportPpt={handleExport}
+              onPresent={() => setShowPresent(true)}
+              messages={messages}
+              pptProgress={pptProgress}
+              isGeneratingPpt={isStreaming && activeTool === 'ppt'}
+              activeArtifact={activeArtifact}
+              artifacts={artifacts}
+              onSelectArtifact={setActiveArtifact}
+              onUpdateArtifact={updateArtifact}
+              onExportExcel={handleExportExcel}
+              onExportDocx={handleExportDocx}
+              onExportMarkdown={handleExportMarkdown}
+              onExportDrawio={handleExportDrawio}
+              onInsertArtifact={handleInsertArtifactToInput}
+            />
+          </div>
+        )}
+
+        {/* 移动端产物面板（md 以下全屏覆盖） */}
+        {hasRenderableArtifact && showArtifactPanel && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <ArtifactPanel
+              activeTool={activeTool}
+              project={project}
+              slides={slides}
+              currentSlideIndex={currentSlideIndex}
+              isOpen={true}
+              isWide={true}
+              onOpenChange={(open) => setShowArtifactPanel(open)}
+              onWideChange={() => {}}
+              onSelectSlide={handleSelectSlide}
+              onExportPpt={handleExport}
+              onPresent={() => setShowPresent(true)}
+              messages={messages}
+              pptProgress={pptProgress}
+              isGeneratingPpt={isStreaming && activeTool === 'ppt'}
+              activeArtifact={activeArtifact}
+              artifacts={artifacts}
+              onSelectArtifact={setActiveArtifact}
+              onUpdateArtifact={updateArtifact}
+              onExportExcel={handleExportExcel}
+              onExportDocx={handleExportDocx}
+              onExportMarkdown={handleExportMarkdown}
+              onExportDrawio={handleExportDrawio}
+              onInsertArtifact={handleInsertArtifactToInput}
+              isMobile
+            />
+          </div>
         )}
       </div>
 
@@ -1955,17 +2044,38 @@ function PresentMode({
   }, [slides.length, onClose])
 
   return (
-    <div className="fixed inset-0 bg-black z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-[60] bg-black flex flex-col items-center justify-center">
       <button
         onClick={onClose}
-        className="absolute top-4 right-4 text-white/60 hover:text-white z-10"
+        className="absolute top-4 right-4 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 transition hover:bg-white/20 hover:text-white"
+        aria-label="关闭演示"
       >
-        <X className="w-6 h-6" />
+        <X className="w-5 h-5" />
       </button>
-      <div className="w-full max-w-5xl aspect-video">
+      <div className="w-full max-w-5xl aspect-video md:aspect-video">
         <SlidePreview slide={slides[index]} layout="16x9" fullScreen />
       </div>
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/50 text-sm">
+      {/* 移动端手势按钮 */}
+      <div className="absolute bottom-6 left-0 right-0 flex items-center justify-center gap-4 md:hidden">
+        <button
+          onClick={() => setIndex((i) => Math.max(i - 1, 0))}
+          disabled={index === 0}
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white/80 disabled:opacity-30"
+          aria-label="上一页"
+        >
+          ‹
+        </button>
+        <span className="min-w-[80px] text-center text-white/70 text-sm">{index + 1} / {slides.length}</span>
+        <button
+          onClick={() => setIndex((i) => Math.min(i + 1, slides.length - 1))}
+          disabled={index === slides.length - 1}
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white/80 disabled:opacity-30"
+          aria-label="下一页"
+        >
+          ›
+        </button>
+      </div>
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/50 text-sm hidden md:block">
         {index + 1} / {slides.length}
       </div>
     </div>

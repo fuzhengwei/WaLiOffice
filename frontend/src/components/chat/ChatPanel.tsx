@@ -587,7 +587,7 @@ export function ChatPanel({
     <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-0 h-20 bg-gradient-to-b from-[#f6f4ef] via-[#f6f4ef]/80 to-transparent" />
 
-      <div className="relative z-10 flex-1 overflow-y-auto px-5 pb-8 pt-10">
+      <div className="relative z-10 flex-1 overflow-y-auto px-3 pb-6 pt-6 md:px-5 md:pb-8 md:pt-10">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
 
           {messages.length === 0 && (
@@ -764,7 +764,7 @@ export function ChatPanel({
         </div>
       </div>
 
-      <div className="relative z-20 shrink-0 bg-[#f6f4ef]/88 px-5 pb-3 pt-2 backdrop-blur-xl">
+      <div className="relative z-20 shrink-0 bg-[#f6f4ef]/88 px-3 pb-2 pt-2 backdrop-blur-xl md:px-5 md:pb-3">
         <div className="mx-auto w-full max-w-3xl">
           {artifacts.length > 0 && (
             <div className="mb-2 overflow-hidden rounded-2xl border border-white/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(249,247,240,0.88))] shadow-[0_8px_28px_rgba(24,24,27,0.08)] backdrop-blur-xl ring-1 ring-black/[0.03]">
@@ -1002,7 +1002,7 @@ export function ChatPanel({
                   ) : (
                     <>
                       {selectableModels.length > 1 && (
-                        <div className="relative">
+                        <div className="relative hidden sm:block">
                           <select
                             value={selectedModel}
                             onChange={(event) => onModelChange(event.target.value)}
@@ -1017,7 +1017,7 @@ export function ChatPanel({
                           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-surface-400" />
                         </div>
                       )}
-                      <div className="relative">
+                      <div className="relative hidden sm:block">
                         <select
                           value={selectedProjectId || ''}
                           onChange={(event) => {
@@ -1061,14 +1061,14 @@ export function ChatPanel({
                 </div>
               </div>
             </div>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1 rounded-[1.2rem] border border-black/[0.05] bg-[#f8f5ee]/86 px-2 py-1.5 backdrop-blur-sm">
+            <div className="mt-1.5 flex items-center gap-1 overflow-x-auto rounded-[1.2rem] border border-black/[0.05] bg-[#f8f5ee]/86 px-2 py-1.5 backdrop-blur-sm md:flex-wrap">
             {AGENT_TOOLS.map((item) => (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => onToolChange(item.id)}
                 disabled={isStreaming}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all disabled:opacity-50 ${
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all disabled:opacity-50 ${
                   activeTool === item.id
                     ? 'border-surface-900 bg-surface-950 text-white shadow-sm'
                     : 'border-black/5 bg-white/70 text-surface-600 backdrop-blur hover:bg-white hover:text-surface-900'
@@ -1078,7 +1078,7 @@ export function ChatPanel({
                 {item.shortName}
               </button>
             ))}
-            <div className="ml-auto flex items-center">
+            <div className="ml-auto flex shrink-0 items-center">
               <ToolConfigDropdown
                 activeTool={activeTool}
                 toolConfig={toolConfig}
