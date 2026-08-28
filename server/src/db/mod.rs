@@ -93,9 +93,20 @@ async fn ensure_sqlite_column(
     .unwrap_or(false);
 
     if !exists {
-        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"))
-            .execute(pool)
-            .await?;
+        // 表不存在则跳过（避免旧库缺表时 ALTER 报错）
+        let table_exists: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .bind(table)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false);
+
+        if table_exists {
+            sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"))
+                .execute(pool)
+                .await?;
+        }
     }
     Ok(())
 }
@@ -166,6 +177,20 @@ async fn ensure_mysql_column(
     column: &str,
     definition: &str,
 ) -> Result<()> {
+    // 表不存在则跳过（容错：旧库可能缺部分表，交由全量迁移或其他逻辑处理）
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+    )
+    .bind(table)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    if !table_exists {
+        tracing::warn!("增量迁移：表 {table} 不存在，跳过补列 {column}");
+        return Ok(());
+    }
+
     let exists: bool = sqlx::query_scalar(
         "SELECT COUNT(*) > 0 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
     )
