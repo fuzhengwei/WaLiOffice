@@ -1,6 +1,6 @@
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use base64::{engine::general_purpose::{URL_SAFE_NO_PAD, STANDARD}, Engine as _};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;
 
 use crate::auth::middleware::AuthUser;
@@ -213,14 +213,18 @@ async fn feishu_login(
         return Err(AppError::BadRequest("缺少授权码".into()));
     }
 
-    // 1. 换 user_access_token
-    let basic = STANDARD.encode(format!("{}:{}", cfg.feishu_app_id, cfg.feishu_app_secret));
+    // 1. 换 user_access_token（飞书官方要求 client_id/client_secret/redirect_uri 放请求体）
     let client = reqwest::Client::new();
     let token_resp = client
         .post("https://open.feishu.cn/open-apis/authen/v2/oauth/token")
-        .header("Authorization", format!("Basic {basic}"))
         .header("Content-Type", "application/json")
-        .json(&serde_json::json!({"grant_type": "authorization_code", "code": code}))
+        .json(&serde_json::json!({
+            "grant_type": "authorization_code",
+            "client_id": cfg.feishu_app_id,
+            "client_secret": cfg.feishu_app_secret,
+            "code": code,
+            "redirect_uri": cfg.feishu_redirect_uri,
+        }))
         .send()
         .await
         .map_err(|_| AppError::BadRequest("飞书授权服务不可用".into()))?;
@@ -228,6 +232,7 @@ async fn feishu_login(
         .json()
         .await
         .map_err(|_| AppError::BadRequest("飞书授权响应异常".into()))?;
+    tracing::info!("[Feishu] token exchange response: {}", token_json);
     let user_token = token_json
         .get("access_token")
         .and_then(|v| v.as_str())
