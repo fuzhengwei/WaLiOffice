@@ -59,6 +59,14 @@ export interface MCPServiceConfig {
   description?: string;
 }
 
+// ===== 搜索服务配置（每用户各自的 API Key） =====
+export interface SearchProvidersConfig {
+  tavily_api_key: string;
+  brave_api_key: string;
+  kimi_api_key: string;
+  provider: string;
+}
+
 export interface AppSettings {
   llm_profiles: LLMProfile[];
   active_profile_id: string;
@@ -66,6 +74,7 @@ export interface AppSettings {
   active_model: string;
   basic: BasicSettings;
   mcp_servers: MCPServiceConfig[];
+  search_providers?: SearchProvidersConfig;
   updated_at: string;
 }
 

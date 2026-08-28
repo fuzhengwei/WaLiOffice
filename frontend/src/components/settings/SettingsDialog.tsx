@@ -1,4 +1,5 @@
-import { Check, KeyRound, Plus, Trash2, X } from 'lucide-react'
+import { Check, KeyRound, Plus, Trash2, X, Cpu, LayoutDashboard, Search } from 'lucide-react'
+import { ModelCombobox } from './ModelCombobox'
 import { useEffect, useMemo, useState } from 'react'
 import { settingsApi } from '@/api'
 import type { AppSettings, LLMProfile, MCPServiceConfig } from '@/types'
@@ -38,11 +39,14 @@ const emptyMcpServer = (): MCPServiceConfig => ({
 })
 
 export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDialogProps) {
-  const [section, setSection] = useState<'llm' | 'base' | 'mcp'>('mcp')
+  const [section, setSection] = useState<'llm' | 'base' | 'mcp' | 'search'>('llm')
   const [draft, setDraft] = useState<AppSettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [testingMcpId, setTestingMcpId] = useState<string | null>(null)
   const [mcpTestResults, setMcpTestResults] = useState<Record<string, { ok: boolean; message: string; tools: string[] }>>({})
+  const [fetchingModelProfile, setFetchingModelProfile] = useState<string | null>(null)
+  const [fetchModelError, setFetchModelError] = useState('')
+  const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, string[]>>({})
 
   useEffect(() => {
     setDraft(settings)
@@ -110,6 +114,30 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
 
   const removeMcp = (id: string) => updateDraft({ mcp_servers: draft.mcp_servers.filter((server) => server.id !== id) })
 
+  // 拉取真实模型列表
+  const handleFetchModels = async (profileId: string) => {
+    const profile = draft.llm_profiles.find((p) => p.id === profileId)
+    if (!profile) return
+    setFetchingModelProfile(profileId)
+    setFetchModelError('')
+    try {
+      const keys = getProfileKeys(profile)
+      const apiKey = keys[0] || ''
+      const { data } = await settingsApi.fetchModels(profile.base_url, apiKey)
+      if (data.models && data.models.length > 0) {
+        setFetchedModelsMap((prev) => ({ ...prev, [profileId]: data.models }))
+        // 自动把拉到的模型合并进已选（首次拉取直接全选，方便快速启用）
+        updateProfile(profileId, { models: data.models, default_model: data.models[0] })
+      } else {
+        setFetchModelError('未拉取到模型，请检查 Base URL 和 API Key')
+      }
+    } catch (err: any) {
+      setFetchModelError(err.response?.data?.detail || '拉取模型列表失败')
+    } finally {
+      setFetchingModelProfile(null)
+    }
+  }
+
   const testMcp = async (server: MCPServiceConfig) => {
     setTestingMcpId(server.id)
     try {
@@ -169,6 +197,9 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
 
           <div className="space-y-1.5">
             {[
+              ['llm', '模型服务', Cpu],
+              ['search', '搜索服务', Search],
+              ['base', '基础信息', LayoutDashboard],
               ['mcp', 'MCP 服务', KeyRound],
             ].map(([key, label, Icon]: any) => (
               <button
@@ -197,6 +228,10 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                   添加配置
                 </button>
               </div>
+
+              {fetchModelError && (
+                <div className="mb-4 rounded-lg bg-red-50 px-4 py-2.5 text-sm text-red-600">{fetchModelError}</div>
+              )}
 
               <div className="mb-5 rounded-[1.5rem] border border-black/[0.06] bg-[#f8f5ee]/80 p-4">
                 <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-surface-500">当前默认模型</label>
@@ -282,20 +317,82 @@ export function SettingsDialog({ open, settings, onClose, onSave }: SettingsDial
                           />
                         </label>
                         <label className="block text-xs font-semibold text-surface-500">
-                          模型列表（逗号分隔）
-                          <input
-                            value={(profile.models || []).join(', ')}
-                            onChange={(event) => {
-                              const models = event.target.value.split(',').map((item) => item.trim()).filter(Boolean)
-                              updateProfile(profile.id, { models, default_model: models[0] || profile.default_model })
-                            }}
-                            className="mt-1.5 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm text-surface-900 outline-none focus:border-surface-500"
+                          <span className="mb-1.5 block">模型列表</span>
+                          <ModelCombobox
+                            models={profile.models || []}
+                            options={fetchedModelsMap[profile.id] || []}
+                            loading={fetchingModelProfile === profile.id}
+                            onChange={(models) => updateProfile(profile.id, { models, default_model: models[0] || profile.default_model })}
+                            onFetch={() => handleFetchModels(profile.id)}
                           />
+                          <span className="mt-1 block text-[11px] text-surface-400">
+                            点开选择已有模型，或输入新模型名回车添加；「拉取」从 Base URL 获取真实列表。
+                          </span>
                         </label>
                       </div>
                     </div>
                   )
                 })}
+              </div>
+            </div>
+          )}
+
+          {section === 'search' && (
+            <div>
+              <h2 className="text-xl font-bold tracking-tight text-surface-950">搜索服务</h2>
+              <p className="mt-1 text-sm text-surface-500">配置联网搜索的 API Key（每个用户各自的 key，保存在服务器端）。</p>
+              <div className="mt-5 space-y-4">
+                <label className="block text-sm font-semibold text-surface-600">
+                  优先搜索源
+                  <select
+                    value={draft.search_providers?.provider || 'auto'}
+                    onChange={(event) => updateDraft({ search_providers: { ...(draft.search_providers || { tavily_api_key: '', brave_api_key: '', kimi_api_key: '', provider: 'auto' }), provider: event.target.value } })}
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 text-sm outline-none focus:border-surface-500"
+                  >
+                    <option value="auto">自动（优先有 key 的源）</option>
+                    <option value="tavily">Tavily</option>
+                    <option value="brave">Brave</option>
+                    <option value="kimi">Kimi</option>
+                    <option value="duckduckgo">DuckDuckGo（免费）</option>
+                  </select>
+                </label>
+
+                <label className="block text-sm font-semibold text-surface-600">
+                  Tavily API Key
+                  <input
+                    type="password"
+                    value={draft.search_providers?.tavily_api_key || ''}
+                    onChange={(event) => updateDraft({ search_providers: { ...(draft.search_providers || { brave_api_key: '', kimi_api_key: '', provider: 'auto' }), tavily_api_key: event.target.value } })}
+                    placeholder="tvly-..."
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+
+                <label className="block text-sm font-semibold text-surface-600">
+                  Brave Search API Key
+                  <input
+                    type="password"
+                    value={draft.search_providers?.brave_api_key || ''}
+                    onChange={(event) => updateDraft({ search_providers: { ...(draft.search_providers || { tavily_api_key: '', kimi_api_key: '', provider: 'auto' }), brave_api_key: event.target.value } })}
+                    placeholder="BSA..."
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+
+                <label className="block text-sm font-semibold text-surface-600">
+                  Kimi API Key
+                  <input
+                    type="password"
+                    value={draft.search_providers?.kimi_api_key || ''}
+                    onChange={(event) => updateDraft({ search_providers: { ...(draft.search_providers || { tavily_api_key: '', brave_api_key: '', provider: 'auto' }), kimi_api_key: event.target.value } })}
+                    placeholder="sk-..."
+                    className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-surface-500"
+                  />
+                </label>
+
+                <p className="rounded-lg bg-surface-50 px-3 py-2 text-xs text-surface-400">
+                  DuckDuckGo 免费无需 key；Tavily / Brave / Kimi 需要各自的 API Key。未填 key 的源会自动跳过。
+                </p>
               </div>
             </div>
           )}

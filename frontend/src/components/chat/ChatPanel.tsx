@@ -1001,7 +1001,7 @@ export function ChatPanel({
                     </button>
                   ) : (
                     <>
-                      {selectableModels.length > 1 && (
+                      {selectableModels.length >= 1 && (
                         <div className="relative hidden sm:block">
                           <select
                             value={selectedModel}

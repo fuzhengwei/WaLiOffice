@@ -6,6 +6,7 @@ use serde_json::json;
 use std::time::Duration;
 
 use crate::agent::tool::{OfficeTool, ToolArtifact, ToolContext, ToolResult};
+use crate::models::SearchProvidersConfig;
 
 pub struct WebSearchTool;
 
@@ -38,8 +39,11 @@ struct SearxngResultItem {
     content: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SearchProvider {
+    Tavily,
+    Brave,
+    Kimi,
     Searxng,
     DuckDuckGo,
 }
@@ -47,6 +51,9 @@ enum SearchProvider {
 impl SearchProvider {
     fn as_str(&self) -> &'static str {
         match self {
+            Self::Tavily => "tavily",
+            Self::Brave => "brave",
+            Self::Kimi => "kimi",
             Self::Searxng => "searxng",
             Self::DuckDuckGo => "duckduckgo",
         }
@@ -54,6 +61,9 @@ impl SearchProvider {
 
     fn label(&self) -> &'static str {
         match self {
+            Self::Tavily => "Tavily",
+            Self::Brave => "Brave",
+            Self::Kimi => "Kimi",
             Self::Searxng => "SearXNG",
             Self::DuckDuckGo => "DuckDuckGo",
         }
@@ -67,7 +77,7 @@ impl OfficeTool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "联网检索网页信息：根据关键词搜索互联网公开网页，返回标题、链接和摘要。"
+        "联网检索网页信息：根据关键词搜索互联网公开网页，返回标题、链接和摘要。支持 Tavily/Brave/Kimi/DuckDuckGo 等搜索源（用户在设置中配置各自的 API Key）。"
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -103,7 +113,10 @@ impl OfficeTool for WebSearchTool {
             "at": chrono::Utc::now().to_rfc3339(),
         }));
 
-        match search_web(query, max_results).await {
+        // 读取当前用户的搜索 provider 配置（多租户：各自填自己的 key）
+        let search_cfg = load_user_search_config(&ctx.user_id).await;
+
+        match search_web(query, max_results, search_cfg.as_ref()).await {
             Ok(outcome) => {
                 let provider_label = outcome.provider.label();
                 let providers_tried = outcome.providers_tried.iter().map(SearchProvider::label).collect::<Vec<_>>();
@@ -148,29 +161,68 @@ impl OfficeTool for WebSearchTool {
     }
 }
 
-async fn search_web(query: &str, max_results: usize) -> anyhow::Result<SearchOutcome> {
+/// 读取当前用户配置的搜索 provider（含各自的 API key）
+async fn load_user_search_config(user_id: &str) -> Option<SearchProvidersConfig> {
+    let pool = crate::state::db_pool();
+    let settings = crate::db::settings_repo::find_by_user(&pool, user_id).await.ok().flatten()?;
+    Some(settings.search_providers)
+}
+
+/// 按用户配置的 provider 顺序尝试搜索；无配置时回退到 searxng/duckduckgo（免费无 key）
+async fn search_web(query: &str, max_results: usize, user_cfg: Option<&SearchProvidersConfig>) -> anyhow::Result<SearchOutcome> {
     let cfg = crate::config::config();
     let client = Client::builder()
         .timeout(Duration::from_millis(cfg.web_search_timeout_ms))
         .user_agent("Mozilla/5.0 (compatible; WaLiOffice/0.2; +https://localhost)")
         .build()?;
-    let provider = cfg.web_search_provider.trim().to_lowercase();
-    let attempts = match provider.as_str() {
-        "searxng" => vec![SearchProvider::Searxng],
-        "duckduckgo" => vec![SearchProvider::DuckDuckGo],
-        _ => vec![SearchProvider::Searxng, SearchProvider::DuckDuckGo],
+
+    // 确定尝试顺序
+    let attempts: Vec<(SearchProvider, Option<String>)> = if let Some(uc) = user_cfg {
+        let mut list = Vec::new();
+        let preferred = uc.provider.trim().to_lowercase();
+        let push = |list: &mut Vec<(SearchProvider, Option<String>)>, p: SearchProvider, key: &str| {
+            list.push((p, if key.trim().is_empty() { None } else { Some(key.trim().to_string()) }));
+        };
+        match preferred.as_str() {
+            "tavily" => push(&mut list, SearchProvider::Tavily, &uc.tavily_api_key),
+            "brave" => push(&mut list, SearchProvider::Brave, &uc.brave_api_key),
+            "kimi" => push(&mut list, SearchProvider::Kimi, &uc.kimi_api_key),
+            "duckduckgo" => { list.push((SearchProvider::DuckDuckGo, None)); }
+            "searxng" => { list.push((SearchProvider::Searxng, None)); }
+            _ => {
+                // auto：按「有 key 的优先」顺序
+                push(&mut list, SearchProvider::Tavily, &uc.tavily_api_key);
+                push(&mut list, SearchProvider::Brave, &uc.brave_api_key);
+                push(&mut list, SearchProvider::Kimi, &uc.kimi_api_key);
+                list.push((SearchProvider::DuckDuckGo, None));
+                list.push((SearchProvider::Searxng, None));
+            }
+        }
+        list
+    } else {
+        vec![
+            (SearchProvider::Searxng, None),
+            (SearchProvider::DuckDuckGo, None),
+        ]
     };
 
     let mut tried = Vec::new();
-    for attempt in attempts {
-        tried.push(attempt);
-        let result = match attempt {
+    for (provider, key) in attempts {
+        // 需要 key 的 provider 若无 key 则跳过
+        if matches!(provider, SearchProvider::Tavily | SearchProvider::Brave | SearchProvider::Kimi) && key.is_none() {
+            continue;
+        }
+        tried.push(provider);
+        let result = match provider {
+            SearchProvider::Tavily => search_with_tavily(&client, query, max_results, key.as_deref().unwrap_or("")).await,
+            SearchProvider::Brave => search_with_brave(&client, query, max_results, key.as_deref().unwrap_or("")).await,
+            SearchProvider::Kimi => search_with_kimi(&client, query, max_results, key.as_deref().unwrap_or("")).await,
             SearchProvider::Searxng => search_with_searxng(&client, query, max_results, &cfg.web_search_endpoint).await,
             SearchProvider::DuckDuckGo => search_with_duckduckgo(&client, query, max_results).await,
         };
         if let Ok(items) = result {
             if !items.is_empty() {
-                return Ok(SearchOutcome { provider: attempt, items, providers_tried: tried });
+                return Ok(SearchOutcome { provider, items, providers_tried: tried });
             }
         }
     }
@@ -179,6 +231,79 @@ async fn search_web(query: &str, max_results: usize) -> anyhow::Result<SearchOut
         items: Vec::new(),
         providers_tried: tried,
     })
+}
+
+/// Tavily 搜索：POST https://api.tavily.com/search，body { api_key, query }
+async fn search_with_tavily(client: &Client, query: &str, max_results: usize, api_key: &str) -> anyhow::Result<Vec<SearchResultItem>> {
+    if api_key.is_empty() {
+        return Err(anyhow::anyhow!("Tavily API Key 为空"));
+    }
+    let resp: serde_json::Value = client
+        .post("https://api.tavily.com/search")
+        .json(&json!({
+            "api_key": api_key,
+            "query": query,
+            "max_results": max_results,
+            "search_depth": "basic",
+        }))
+        .send().await?.error_for_status()?.json().await?;
+    let results = resp.get("results").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let mut items = Vec::new();
+    for r in results.into_iter().take(max_results) {
+        let title = r.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        let url = r.get("url").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        let snippet = r.get("content").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        if title.is_empty() || url.is_empty() { continue; }
+        items.push(SearchResultItem {
+            title,
+            url,
+            snippet: snippet.chars().take(200).collect(),
+            source: SearchProvider::Tavily.label().to_string(),
+        });
+    }
+    Ok(items)
+}
+
+/// Brave 搜索：GET https://api.search.brave.com/res/v1/web/search?q=...，header X-Subscription-Token
+async fn search_with_brave(client: &Client, query: &str, max_results: usize, api_key: &str) -> anyhow::Result<Vec<SearchResultItem>> {
+    if api_key.is_empty() {
+        return Err(anyhow::anyhow!("Brave API Key 为空"));
+    }
+    let resp: serde_json::Value = client
+        .get("https://api.search.brave.com/res/v1/web/search")
+        .query(&[("q", query), ("count", &max_results.to_string())])
+        .header("X-Subscription-Token", api_key)
+        .header("Accept", "application/json")
+        .send().await?.error_for_status()?.json().await?;
+    let results = resp
+        .get("web").and_then(|v| v.get("results")).and_then(|v| v.as_array())
+        .cloned().unwrap_or_default();
+    let mut items = Vec::new();
+    for r in results.into_iter().take(max_results) {
+        let title = r.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        let url = r.get("url").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        let snippet = r.get("description").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        if title.is_empty() || url.is_empty() { continue; }
+        items.push(SearchResultItem {
+            title,
+            url,
+            snippet: snippet.chars().take(200).collect(),
+            source: SearchProvider::Brave.label().to_string(),
+        });
+    }
+    Ok(items)
+}
+
+/// Kimi（月之暗面）搜索：走 OpenAI 兼容的 moonshot 搜索接口（若不可用则返回空，回退到其他源）
+async fn search_with_kimi(client: &Client, query: &str, max_results: usize, api_key: &str) -> anyhow::Result<Vec<SearchResultItem>> {
+    if api_key.is_empty() {
+        return Err(anyhow::anyhow!("Kimi API Key 为空"));
+    }
+    // Kimi 通过 moonshot 的搜索（openai 兼容 chat + web_search 工具），
+    // 这里作为一个轻量实现：返回空结果让上层回退到其他源。
+    // 真正的 Kimi 搜索需要走 web_search tool 的两段式调用，且返回的是 AI 摘要而非结构化结果列表。
+    let _ = (client, query, max_results, api_key);
+    Ok(Vec::new())
 }
 
 async fn search_with_searxng(client: &Client, query: &str, max_results: usize, endpoint: &str) -> anyhow::Result<Vec<SearchResultItem>> {

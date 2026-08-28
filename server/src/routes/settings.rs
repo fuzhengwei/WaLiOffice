@@ -1,5 +1,6 @@
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::auth::middleware::AuthUser;
@@ -14,6 +15,14 @@ pub fn router() -> Router {
     Router::new()
         .route("/api/settings", get(get_settings).put(save_settings))
         .route("/api/settings/mcp/test", post(test_mcp_service))
+        .route("/api/settings/fetch-models", post(fetch_models))
+}
+
+#[derive(Debug, Deserialize)]
+struct FetchModelsReq {
+    base_url: String,
+    #[serde(default)]
+    api_key: String,
 }
 
 pub fn default_settings() -> AppSettings {
@@ -46,6 +55,10 @@ pub fn default_settings() -> AppSettings {
             default_theme: "default".into(),
         },
         mcp_servers: builtin_mcp_servers(),
+        search_providers: crate::models::SearchProvidersConfig {
+            provider: "auto".into(),
+            ..Default::default()
+        },
         updated_at: chrono::Utc::now().to_rfc3339(),
     }
 }
@@ -537,4 +550,80 @@ async fn test_sse_mcp_service(
         "message": format!("MCP SSE 服务连接成功，共发现 {} 个工具", tools.len()),
         "tools": tools
     })))
+}
+
+/// 拉取 LLM 服务的真实模型列表（OpenAI 兼容 /models 接口）
+async fn fetch_models(
+    _user: AuthUser,
+    Json(req): Json<FetchModelsReq>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let base_url = req.base_url.trim().trim_end_matches('/').to_string();
+    if base_url.is_empty() {
+        return Err(AppError::BadRequest("Base URL 不能为空".into()));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("构建 HTTP 客户端失败: {e}")))?;
+
+    // 兼容不同的 /models 路径：先试 {base_url}/models，再试 {base_url}/v1/models
+    let endpoints = vec![
+        format!("{base_url}/models"),
+        format!("{base_url}/v1/models"),
+    ];
+
+    let mut last_err: Option<String> = None;
+    let mut models: Vec<String> = Vec::new();
+
+    for endpoint in endpoints {
+        let mut builder = client.get(&endpoint);
+        if !req.api_key.trim().is_empty() {
+            builder = builder.header("Authorization", format!("Bearer {}", req.api_key.trim()));
+        }
+        match builder.send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    let json: serde_json::Value = resp
+                        .json()
+                        .await
+                        .unwrap_or(serde_json::Value::Null);
+                    // OpenAI 兼容格式：{ "data": [ { "id": "gpt-4" }, ... ] }
+                    if let Some(arr) = json.get("data").and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                if !id.is_empty() && !models.contains(&id.to_string()) {
+                                    models.push(id.to_string());
+                                }
+                            }
+                        }
+                    }
+                    // Ollama 格式：{ "models": [ { "name": "llama3" }, ... ] }
+                    if let Some(arr) = json.get("models").and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                                if !name.is_empty() && !models.contains(&name.to_string()) {
+                                    models.push(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    if !models.is_empty() {
+                        return Ok(Json(json!({ "models": models })));
+                    }
+                    last_err = Some("接口返回了空模型列表，可能该服务不支持 /models 查询".into());
+                } else {
+                    last_err = Some(format!("HTTP {}", resp.status().as_u16()));
+                }
+            }
+            Err(e) => {
+                last_err = Some(format!("请求失败: {e}"));
+            }
+        }
+    }
+
+    Err(AppError::BadRequest(format!(
+        "拉取模型列表失败：{}",
+        last_err.unwrap_or_else(|| "未知错误".into())
+    )))
 }

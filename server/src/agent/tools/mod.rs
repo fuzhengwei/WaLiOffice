@@ -2,6 +2,7 @@ pub mod agnes_media;
 pub mod chart_generate;
 pub mod doc_generate;
 pub mod drawio_generate;
+pub mod feishu_tools;
 pub mod image_prompt;
 pub mod local_video;
 pub mod md_generate;
@@ -49,6 +50,9 @@ pub async fn register_all_tools() {
         .register(Arc::new(video_storyboard::VideoStoryboardTool))
         .await;
     REGISTRY.register(Arc::new(web_search_generic::WebSearchTool)).await;
+    REGISTRY.register(Arc::new(feishu_tools::FeishuDocReadTool)).await;
+    REGISTRY.register(Arc::new(feishu_tools::FeishuBitableQueryTool)).await;
+    REGISTRY.register(Arc::new(feishu_tools::FeishuCalendarListTool)).await;
 
     let tools = REGISTRY.list().await;
     tracing::info!(

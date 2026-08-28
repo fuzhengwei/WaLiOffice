@@ -102,6 +102,8 @@ export const settingsApi = {
   getSettings: () => api.get<AppSettings>('/settings'),
   saveSettings: (payload: AppSettings) => api.put<AppSettings>('/settings', payload),
   testMcp: (payload: MCPServiceConfig) => api.post('/settings/mcp/test', payload),
+  fetchModels: (baseUrl: string, apiKey: string) =>
+    api.post<{ models: string[] }>('/settings/fetch-models', { base_url: baseUrl, api_key: apiKey }),
 };
 
 // ===== 文件 API =====

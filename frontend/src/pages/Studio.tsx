@@ -9,7 +9,7 @@ import { SlidePreview } from '@/components/preview/SlidePreview'
 import { ConversationSidebar } from '@/components/history/ConversationSidebar'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
-import { AlertCircle, CheckCircle2, Info, Play, X, PanelRightClose, PanelRight, Files, Menu } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Info, Play, X, PanelRightClose, PanelRight, Files, Menu, Settings } from 'lucide-react'
 import type { AppSettings, Artifact, ChatAttachment, ConversationRecord, InputRef, LLMProfile, PersistedSession, ProjectMeta, ToolKind, ToolConfigMap } from '@/types'
 import { extractArtifactSummary } from '@/lib/artifact-summary'
 const LOGO_URL = '/logo.png'
@@ -289,20 +289,24 @@ export default function Studio() {
   }
 
   useEffect(() => {
-    // 初始化第一个 tab
-    tabCounterRef.current += 1
-    const firstTabId = `tab-${Date.now()}`
-    openTab(firstTabId)
-    setTabUiState((prev) => ({
-      ...prev,
-      [firstTabId]: { input: '', attachments: [], inputRefs: [], streamStatus: '空闲', streamPhase: 'idle', processLogs: [], activeTool: 'general', activeProjectId: null, selectedTheme: 'default', toolConfig: {}, showArtifactPanel: false, pptProgress: null, followLatestSlide: true },
-    }))
+    // 有历史 tab（persist 恢复）则切回，避免路由切换后总是新建空白会话
+    const hasRestoredTabs = activeTabId && tabs && Object.keys(tabs).length > 0
+    if (!hasRestoredTabs) {
+      // 首次访问：初始化第一个 tab
+      tabCounterRef.current += 1
+      const firstTabId = `tab-${Date.now()}`
+      openTab(firstTabId)
+      setTabUiState((prev) => ({
+        ...prev,
+        [firstTabId]: { input: '', attachments: [], inputRefs: [], streamStatus: '空闲', streamPhase: 'idle', processLogs: [], activeTool: 'general', activeProjectId: null, selectedTheme: 'default', toolConfig: {}, showArtifactPanel: false, pptProgress: null, followLatestSlide: true },
+      }))
+    }
 
     loadSettings()
     refreshProjects()
     refreshConversations('')
     loadHistoryArtifacts()
-    // 从 URL 恢复会话
+    // 从 URL 恢复会话（优先级高于 persist 恢复的 tab）
     const restoreSessionId = searchParams.get('s')
     if (restoreSessionId) {
       handleSelectConversation(restoreSessionId)
@@ -1847,6 +1851,13 @@ export default function Studio() {
               >
                 <Play className="w-4 h-4" />
                 <span className="hidden sm:inline">演示</span>
+              </button>
+              <button
+                onClick={() => setActiveView(activeView === 'settings' ? 'chat' : 'settings')}
+                className="btn-ghost shrink-0 rounded-full bg-white/45 hover:bg-white/75"
+                title="设置（模型 / URL / API Key）"
+              >
+                <Settings className="w-4 h-4" />
               </button>
             </div>
           </header>

@@ -129,7 +129,22 @@ pub struct AppSettings {
     pub basic: BasicSettings,
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
+    #[serde(default)]
+    pub search_providers: SearchProvidersConfig,
     pub updated_at: String,
+}
+
+/// 每用户的搜索服务配置（多租户场景下各自填写自己的 key）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SearchProvidersConfig {
+    #[serde(default)]
+    pub tavily_api_key: String,
+    #[serde(default)]
+    pub brave_api_key: String,
+    #[serde(default)]
+    pub kimi_api_key: String,
+    #[serde(default)]
+    pub provider: String, // 优先使用的搜索源：auto / tavily / brave / kimi / duckduckgo
 }
 
 #[derive(Debug, Clone, Deserialize)]

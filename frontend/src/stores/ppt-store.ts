@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { Artifact, PPTProject, Slide, ChatMessage, ToolKind } from '@/types';
 
 interface ConversationState {
@@ -121,7 +122,9 @@ function syncFromTab(state: PPTState, tabId: string): Partial<PPTState> {
   };
 }
 
-export const usePPTStore = create<PPTState>((set, get) => ({
+export const usePPTStore = create<PPTState>()(
+  persist(
+    (set, get) => ({
   activeTabId: null,
   tabs: {},
 
@@ -410,4 +413,14 @@ export const usePPTStore = create<PPTState>((set, get) => ({
       };
     });
   },
-}));
+  }),
+    {
+      name: 'aippt-conversation-state',
+      partialize: (state) => ({
+        activeTabId: state.activeTabId,
+        tabs: state.tabs,
+        sessionId: state.sessionId,
+      }),
+    }
+  )
+);
