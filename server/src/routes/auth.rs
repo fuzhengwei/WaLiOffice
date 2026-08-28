@@ -319,20 +319,23 @@ async fn save_feishu_token(
 
     let now = chrono::Utc::now().timestamp();
 
-    // 读现有 settings，合并 scope（增量授权：新授权的 scope 追加到已有）
-    if let Ok(Some(mut settings)) = settings_repo::find_by_user(pool, user_id).await {
-        let existing = settings.feishu_token.clone();
-        let merged_scopes = merge_scopes(&existing.scopes, &new_scopes);
-        settings.feishu_token = FeishuToken {
-            user_access_token: if access_token.is_empty() { existing.user_access_token } else { access_token },
-            refresh_token: if refresh_token.is_empty() { existing.refresh_token } else { refresh_token },
-            expires_at: now + expires_in,
-            refresh_expires_at: if refresh_expires_in > 0 { now + refresh_expires_in } else { existing.refresh_expires_at },
-            scopes: merged_scopes,
-            open_id: open_id.to_string(),
-        };
-        let _ = settings_repo::save_for_user(pool, user_id, &settings).await;
-    }
+    // 读现有 settings（首次登录时可能不存在，用 default_settings 兜底）
+    let base = match settings_repo::find_by_user(pool, user_id).await {
+        Ok(Some(s)) => s,
+        _ => crate::routes::settings::default_settings(),
+    };
+    let mut settings = base;
+    let existing = settings.feishu_token.clone();
+    let merged_scopes = merge_scopes(&existing.scopes, &new_scopes);
+    settings.feishu_token = FeishuToken {
+        user_access_token: if access_token.is_empty() { existing.user_access_token } else { access_token },
+        refresh_token: if refresh_token.is_empty() { existing.refresh_token } else { refresh_token },
+        expires_at: now + expires_in,
+        refresh_expires_at: if refresh_expires_in > 0 { now + refresh_expires_in } else { existing.refresh_expires_at },
+        scopes: merged_scopes,
+        open_id: open_id.to_string(),
+    };
+    let _ = settings_repo::save_for_user(pool, user_id, &settings).await;
 }
 
 /// 合并两个空格分隔的 scope 列表（去重）

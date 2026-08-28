@@ -73,7 +73,9 @@ export default function Login() {
 
   const handleFeishuLogin = () => {
     const redirect = feishuRedirect || `${window.location.origin}/login`
-    const url = `https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=${feishuAppId}&redirect_uri=${encodeURIComponent(redirect)}&state=${Date.now()}`
+    // 带 offline_access 以获取 refresh_token + 基础用户信息 scope
+    const scope = 'offline_access auth:user.id:read contact:user.base:readonly docx:document:readonly bitable:app:readonly calendar:calendar:read drive:drive:readonly wiki:wiki:readonly'
+    const url = `https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=${feishuAppId}&redirect_uri=${encodeURIComponent(redirect)}&scope=${encodeURIComponent(scope)}&state=${Date.now()}`
     window.location.href = url
   }
 

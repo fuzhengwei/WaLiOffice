@@ -781,7 +781,8 @@ export default function Studio() {
     try {
       const { data } = await authApi.feishuConfig()
       const redirect = data.redirect_uri || `${window.location.origin}/login`
-      const url = `https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=${data.app_id}&redirect_uri=${encodeURIComponent(redirect)}&scope=${encodeURIComponent(feishuAuthPrompt.scope)}&state=${Date.now()}`
+      const scope = `offline_access ${feishuAuthPrompt.scope}`
+      const url = `https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=${data.app_id}&redirect_uri=${encodeURIComponent(redirect)}&scope=${encodeURIComponent(scope)}&state=${Date.now()}`
       window.open(url, '_blank')
       setFeishuAuthPrompt(null)
     } catch {
