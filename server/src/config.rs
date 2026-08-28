@@ -47,6 +47,14 @@ pub struct Config {
     // 数据库配置
     pub database_url: String,
     pub db_max_connections: u32,
+
+    // 飞书 OAuth 配置
+    pub feishu_app_id: String,
+    pub feishu_app_secret: String,
+    pub feishu_redirect_uri: String,
+
+    // 开放注册开关（单实例多用户场景可关自动注册，走邀请制）
+    pub allow_register: bool,
 }
 
 impl Config {
@@ -173,6 +181,12 @@ impl Config {
 
             database_url,
             db_max_connections: env_or("DB_MAX_CONNECTIONS", "8").parse().unwrap_or(8),
+
+            feishu_app_id: env::var("FEISHU_APP_ID").unwrap_or_default(),
+            feishu_app_secret: env::var("FEISHU_APP_SECRET").unwrap_or_default(),
+            feishu_redirect_uri: env_or("FEISHU_REDIRECT_URI", ""),
+
+            allow_register: env_or("ALLOW_REGISTER", "true").parse().unwrap_or(true),
         })
     }
 

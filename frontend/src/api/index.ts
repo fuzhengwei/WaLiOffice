@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth-store';
-import type { TokenResponse, ToolKind, Artifact, PersistedSession, AppSettings, MCPServiceConfig, ChatAttachment } from '@/types';
+import type { TokenResponse, ToolKind, Artifact, PersistedSession, AppSettings, MCPServiceConfig, ChatAttachment, Tenant, User } from '@/types';
 
 const API_BASE = '/api';
 
@@ -36,6 +36,11 @@ export const authApi = {
     api.post<TokenResponse>('/auth/verification-login', { code }),
   register: (username: string, email: string, password: string) =>
     api.post<TokenResponse>('/auth/register', { username, email, password }),
+  registerByInvite: (inviteCode: string, username: string, password: string) =>
+    api.post<TokenResponse>('/auth/register-by-invite', { invite_code: inviteCode, username, password }),
+  feishuLogin: (code: string) =>
+    api.post<TokenResponse>('/auth/feishu/login', { code }),
+  feishuConfig: () => api.get<{ enabled: boolean; app_id: string; redirect_uri: string }>('/auth/feishu/config'),
   getMe: () => api.get('/auth/me'),
   changePassword: (oldPassword: string, newPassword: string) =>
     api.post('/auth/change-password', { old_password: oldPassword, new_password: newPassword }),
@@ -145,6 +150,29 @@ export const notificationApi = {
   markAsRead: (id: string) => api.post(`/notifications/${id}/read`),
   markAllAsRead: () => api.post('/notifications/read-all'),
   delete: (id: string) => api.delete(`/notifications/${id}`),
+};
+
+// ===== 租户/多租户管理 API =====
+export const tenantApi = {
+  list: () => api.get<{ tenants: Tenant[] }>('/tenants'),
+  get: (id: string) => api.get<Tenant>(`/tenants/${id}`),
+  create: (name: string, slug: string, plan?: string) =>
+    api.post<Tenant>('/tenants', { name, slug, plan }),
+  update: (id: string, updates: { name?: string; plan?: string; status?: string }) =>
+    api.patch<Tenant>(`/tenants/${id}`, updates),
+  delete: (id: string) => api.delete(`/tenants/${id}`),
+  myTenant: () => api.get<{ tenant: Tenant | null } | Tenant>('/tenant/me'),
+  listMembers: (tenantId: string) => api.get<{ members: User[] }>(`/tenants/${tenantId}/members`),
+  addMember: (tenantId: string, userId: string, role?: string) =>
+    api.post(`/tenants/${tenantId}/members`, { user_id: userId, role }),
+  updateMemberRole: (tenantId: string, userId: string, role: string) =>
+    api.post(`/tenants/${tenantId}/members/${userId}`, { role }),
+  removeMember: (tenantId: string, userId: string) =>
+    api.delete(`/tenants/${tenantId}/members/${userId}`),
+  resetInviteCode: (tenantId: string) =>
+    api.post<{ invite_code: string }>(`/tenants/${tenantId}/invite-code`),
+  updateUserRole: (userId: string, role: string) =>
+    api.post(`/users/${userId}/role`, { role }),
 };
 
 // ===== 对话 API (SSE) =====

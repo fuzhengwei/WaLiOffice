@@ -136,3 +136,40 @@ fn rbac_role_helpers() {
     assert!(!mk("member", Some("t")).is_tenant_admin());
     assert!(!mk("member", Some("t")).is_super_admin());
 }
+
+#[tokio::test]
+async fn tenant_invite_code_flow() {
+    let pool = make_pool().await;
+    let tenant = tenant_repo::create(&pool, "Org", "org", "free").await.unwrap();
+
+    // 新建租户应自动生成 invite_code
+    assert!(!tenant.invite_code.is_empty());
+
+    // 按邀请码可查到租户
+    let found = tenant_repo::find_by_invite_code(&pool, &tenant.invite_code)
+        .await
+        .unwrap()
+        .expect("exists");
+    assert_eq!(found.id, tenant.id);
+
+    // 无效邀请码返回 None
+    assert!(tenant_repo::find_by_invite_code(&pool, "bad-code")
+        .await
+        .unwrap()
+        .is_none());
+
+    // 重置邀请码后旧码失效、新码可用
+    let new_code = tenant_repo::reset_invite_code(&pool, &tenant.id)
+        .await
+        .unwrap()
+        .expect("new code");
+    assert_ne!(new_code, tenant.invite_code);
+    assert!(tenant_repo::find_by_invite_code(&pool, &tenant.invite_code)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(tenant_repo::find_by_invite_code(&pool, &new_code)
+        .await
+        .unwrap()
+        .is_some());
+}

@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
-  Bell, Files, LogOut, Sparkles, Github
+  Bell, Files, LogOut, Sparkles, Github, ShieldCheck
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -15,6 +15,12 @@ const NAV_ITEMS = [
 export function AppLayout() {
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
+
+  const isAdmin = user?.role === 'super_admin' || user?.role === 'tenant_admin'
+
+  const navItems = isAdmin
+    ? [...NAV_ITEMS.slice(0, 2), { to: '/admin', label: '管理', icon: ShieldCheck }, NAV_ITEMS[2]]
+    : NAV_ITEMS
 
   const handleLogout = () => {
     logout()
@@ -43,7 +49,7 @@ export function AppLayout() {
             </button>
 
             <nav className="hidden items-center gap-2 md:flex">
-              {NAV_ITEMS.map((item) => {
+              {navItems.map((item) => {
                 const Icon = item.icon
                 if (item.external) {
                   return (
@@ -109,7 +115,7 @@ export function AppLayout() {
           </div>
 
           <div className="mx-auto flex max-w-[1440px] gap-2 px-4 pb-3 md:hidden">
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const Icon = item.icon
               if (item.external) {
                 return (

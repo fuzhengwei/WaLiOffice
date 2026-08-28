@@ -28,6 +28,7 @@ CREATE TABLE tenants (
     slug VARCHAR(255) UNIQUE NOT NULL,
     plan VARCHAR(50) NOT NULL DEFAULT 'free',
     status VARCHAR(50) NOT NULL DEFAULT 'active',
+    invite_code VARCHAR(64) NULL,
     created_at VARCHAR(50) NOT NULL,
     updated_at VARCHAR(50) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

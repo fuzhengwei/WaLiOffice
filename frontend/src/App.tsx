@@ -6,6 +6,7 @@ import { AppLayout } from '@/components/layout/AppLayout'
 
 const Studio = lazy(() => import('@/pages/Studio'))
 const FilesPage = lazy(() => import('@/pages/files/FilesPage'))
+const AdminPage = lazy(() => import('@/pages/AdminPage'))
 
 function Loading() {
   return <div className="flex items-center justify-center h-screen text-slate-400">加载中…</div>
@@ -30,6 +31,7 @@ function App() {
         <Route path="/" element={<Studio />} />
         <Route element={<AppLayout />}>
           <Route path="/files" element={<FilesPage />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="/studio" element={<Navigate to="/" replace />} />
           <Route path="/*" element={<Navigate to="/" />} />
         </Route>

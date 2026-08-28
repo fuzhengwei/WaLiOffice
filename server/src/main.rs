@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use tracing::info;
 
-use walioffice::{agent, auth, config, routes, state};
+use walioffice::{agent, config, routes, state};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

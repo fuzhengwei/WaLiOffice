@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     slug TEXT UNIQUE NOT NULL,
     plan TEXT NOT NULL DEFAULT 'free',
     status TEXT NOT NULL DEFAULT 'active',
+    invite_code TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

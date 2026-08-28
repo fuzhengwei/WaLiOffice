@@ -75,6 +75,7 @@ async fn run_migrations_sqlite(pool: &sqlx::SqlitePool) -> Result<()> {
     ensure_sqlite_column(pool, "files", "tenant_id", "TEXT").await?;
     ensure_sqlite_column(pool, "notifications", "tenant_id", "TEXT").await?;
     ensure_sqlite_column(pool, "user_settings", "tenant_id", "TEXT").await?;
+    ensure_sqlite_column(pool, "tenants", "invite_code", "TEXT").await?;
 
     Ok(())
 }
@@ -149,6 +150,7 @@ async fn run_mysql_incremental(pool: &sqlx::MySqlPool) -> Result<()> {
                 slug VARCHAR(255) UNIQUE NOT NULL,
                 plan VARCHAR(50) NOT NULL DEFAULT 'free',
                 status VARCHAR(50) NOT NULL DEFAULT 'active',
+                invite_code VARCHAR(64) NULL,
                 created_at VARCHAR(50) NOT NULL,
                 updated_at VARCHAR(50) NOT NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
@@ -156,6 +158,8 @@ async fn run_mysql_incremental(pool: &sqlx::MySqlPool) -> Result<()> {
         .execute(pool)
         .await?;
     }
+
+    ensure_mysql_column(pool, "tenants", "invite_code", "VARCHAR(64) NULL").await?;
 
     // 逐表补充 tenant_id 列（MySQL 支持 ADD COLUMN IF NOT EXISTS 从 8.0.29 起，
     // 为兼容旧版本，先查 information_schema 再决定是否 ADD）

@@ -29,6 +29,8 @@ pub struct Tenant {
     pub slug: String,
     pub plan: String,
     pub status: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub invite_code: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -139,6 +141,24 @@ pub struct LoginRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct VerificationLoginRequest {
     pub code: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeishuLoginRequest {
+    /// 飞书授权回调返回的 code
+    pub code: String,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InviteRequest {
+    /// 邀请码 / 邀请 token
+    pub invite_code: String,
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

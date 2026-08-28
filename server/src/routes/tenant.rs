@@ -14,9 +14,14 @@ use crate::state;
 pub fn router() -> Router {
     Router::new()
         .route("/api/tenants", get(list_tenants).post(create_tenant))
+        .route("/api/tenant/me", get(my_tenant))
         .route(
             "/api/tenants/:tenant_id",
             get(get_tenant).patch(update_tenant).delete(delete_tenant),
+        )
+        .route(
+            "/api/tenants/:tenant_id/invite-code",
+            post(reset_invite_code),
         )
         .route(
             "/api/tenants/:tenant_id/members",
@@ -185,6 +190,31 @@ async fn update_user_role(
         .await?
         .ok_or(AppError::NotFound("用户不存在".into()))?;
     Ok(Json(json!(updated)))
+}
+
+/// 当前用户所属租户信息（租户管理员可拿 invite_code 邀请成员）
+async fn my_tenant(user: AuthUser) -> Result<Json<serde_json::Value>, AppError> {
+    let pool = state::db_pool();
+    let Some(tenant_id) = user.0.tenant_id.as_deref() else {
+        return Ok(Json(json!({ "tenant": null })));
+    };
+    let tenant = tenant_repo::find_by_id(&pool, tenant_id)
+        .await?
+        .ok_or(AppError::NotFound("租户不存在".into()))?;
+    Ok(Json(json!(crate::models::Tenant::from(tenant))))
+}
+
+/// 重置邀请码（仅 super_admin 或该租户的 tenant_admin）
+async fn reset_invite_code(
+    user: AuthUser,
+    Path(tenant_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_tenant_admin(&user.0, &tenant_id)?;
+    let pool = state::db_pool();
+    let new_code = tenant_repo::reset_invite_code(&pool, &tenant_id)
+        .await?
+        .ok_or(AppError::NotFound("租户不存在".into()))?;
+    Ok(Json(json!({ "invite_code": new_code })))
 }
 
 fn require_tenant_admin(user: &crate::models::User, tenant_id: &str) -> Result<(), AppError> {

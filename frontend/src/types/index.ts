@@ -221,10 +221,23 @@ export interface ChatMessage {
 // ===== 用户 =====
 export interface User {
   id: string;
+  tenant_id?: string | null;
   username: string;
   email?: string;
   avatar?: string;
   role?: string;
+}
+
+// ===== 租户 =====
+export interface Tenant {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  status: string;
+  invite_code?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface TokenResponse {

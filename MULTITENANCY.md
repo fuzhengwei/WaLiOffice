@@ -45,34 +45,53 @@
 |------|------|
 | `GET/POST /api/tenants` | super_admin |
 | `GET/PATCH/DELETE /api/tenants/:id` | super_admin |
+| `GET /api/tenant/me` | 任意登录用户（返回自己所在租户） |
+| `POST /api/tenants/:id/invite-code` | tenant_admin / super_admin（重置邀请码） |
 | `GET/POST /api/tenants/:id/members` | tenant_admin / super_admin |
 | `POST/DELETE /api/tenants/:id/members/:user_id` | tenant_admin / super_admin |
 | `POST /api/users/:user_id/role` | super_admin |
 
-### 5. 注册逻辑
+### 5. 注册与邀请码
 
 - 平台**首个注册用户**自动成为 `super_admin`（无租户归属）。
-- 后续用户注册自动创建**个人租户**并成为 `tenant_admin`。
-- 支持在注册时指定 `tenant_id` 归属已有租户（成员身份）。
+- 每个租户自动生成 `invite_code`（邀请码）。
+- **邀请码注册**（`POST /api/auth/register-by-invite`）：成员凭邀请码注册，自动归属对应租户。
+- `ALLOW_REGISTER=true` 时，普通注册自动创建个人租户并成为 `tenant_admin`；设为 `false` 则仅允许邀请码注册（收紧准入）。
+
+### 6. 飞书 OAuth 登录
+
+- 端点：`POST /api/auth/feishu/login`（code 换 token + open_id，自动建/找用户并签发 JWT）。
+- 前端配置：`GET /api/auth/feishu/config`（返回 app_id / redirect_uri / enabled）。
+- 配置项：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_REDIRECT_URI`（配齐后前端显示「飞书账号登录」按钮）。
+- 飞书用户按 `open_id` 去重（`username=feishu_{open_id}`），首次登录自动建账号。
+
+### 7. 前端管理界面
+
+- 新增 `AdminPage`（`/admin`），仅 `super_admin` / `tenant_admin` 可见入口。
+- 超级管理员：租户列表、创建/删除租户、复制/重置邀请码、全局用户角色。
+- 租户管理员：查看本租户邀请码、成员管理（添加/移除/角色升降）。
+- 登录页升级为多 Tab：验证码登录 / 账号密码登录 / 注册 / 邀请码注册 + 飞书登录按钮。
 
 ## 三、启动引导（多租户初始化）
 
 1. 部署后先注册第一个账号 → 自动成为超级管理员。
-2. 超管调用 `POST /api/tenants` 创建租户。
-3. 租户管理员邀请成员（`POST /api/tenants/:id/members`）或成员注册时带 `tenant_id` 加入。
+2. 超管在 `/admin` 界面创建租户，复制邀请码发给成员。
+3. 成员用邀请码注册（或飞书登录）自动归属对应租户。
+4. 租户管理员在 `/admin` 管理本租户成员与邀请码。
 
 ## 四、测试
 
-- `server/tests/multitenancy.rs`：6 个集成测试覆盖租户 CRUD、用户归属、角色升级、租户迁移、RBAC 辅助函数。
-- 全量测试：`cargo test`（18 个用例全部通过）。
+- `server/tests/multitenancy.rs`：7 个集成测试覆盖租户 CRUD、用户归属、角色升级、租户迁移、RBAC、邀请码流程。
+- 全量测试：`cargo test`（19 个用例全部通过）
+- 前端：`pnpm build` 构建通过（`webpack/vite` 无错误）。
 
 ```bash
 cd server
 cargo test
 ```
 
-## 五、Microsoft MySQL 支持
+## 五、MySQL 支持
 
 MySQL 依赖 `sqlx` 的 `mysql` feature（已内置），通过 `DATABASE_URL=mysql://user:password@host:3306/walioffice` 启用。启动时自动执行建表/增量迁移：
-- 全新库：完整建表（含 `tenants` + `tenant_id`）。
-- 旧库升级：自动补 `tenants` 表 + 各业务表 `tenant_id` 列，不丢数据。
+- 全新库：完整建表（含 `tenants` + `tenant_id` + `invite_code`）。
+- 旧库升级：自动补 `tenants` 表 + `invite_code` 列 + 各业务表 `tenant_id` 列，不丢数据。
