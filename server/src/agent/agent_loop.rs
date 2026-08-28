@@ -30,6 +30,7 @@ pub enum AgentEvent {
         success: bool,
         result: serde_json::Value,
         error: Option<String>,
+        needs_auth: Option<String>,
     },
     Artifact {
         artifact: Artifact,
@@ -357,6 +358,7 @@ pub async fn run_agent_loop(
                         success: result.success,
                         result: result.data.clone().unwrap_or(serde_json::Value::Null),
                         error: result.error.clone(),
+                        needs_auth: result.needs_auth.clone(),
                     })
                     .await;
 

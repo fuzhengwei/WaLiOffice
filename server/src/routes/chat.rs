@@ -1029,12 +1029,13 @@ async fn chat_stream(
                         "at": chrono::Utc::now().to_rfc3339(),
                     }).to_string())
                 }
-                AgentEvent::ToolResult { tool, success, result, error } => {
+                AgentEvent::ToolResult { tool, success, result, error, needs_auth } => {
                     Event::default().event("tool_result").data(serde_json::json!({
                         "tool": tool,
                         "success": success,
                         "result": result,
                         "error": error,
+                        "needs_auth": needs_auth,
                     }).to_string())
                 }
                 AgentEvent::Artifact { artifact } => {

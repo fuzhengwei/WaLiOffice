@@ -131,6 +131,8 @@ pub struct AppSettings {
     pub mcp_servers: Vec<McpServerConfig>,
     #[serde(default)]
     pub search_providers: SearchProvidersConfig,
+    #[serde(default)]
+    pub feishu_token: FeishuToken,
     pub updated_at: String,
 }
 
@@ -145,6 +147,26 @@ pub struct SearchProvidersConfig {
     pub kimi_api_key: String,
     #[serde(default)]
     pub provider: String, // 优先使用的搜索源：auto / tavily / brave / kimi / duckduckgo
+}
+
+/// 飞书用户授权令牌（持久化，支持按需增量授权 + 自动刷新）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FeishuToken {
+    #[serde(default)]
+    pub user_access_token: String,
+    #[serde(default)]
+    pub refresh_token: String,
+    /// access_token 过期时间（Unix 秒）
+    #[serde(default)]
+    pub expires_at: i64,
+    /// refresh_token 过期时间（Unix 秒）
+    #[serde(default)]
+    pub refresh_expires_at: i64,
+    /// 已授权的 scope（空格分隔）
+    #[serde(default)]
+    pub scopes: String,
+    #[serde(default)]
+    pub open_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -153,6 +153,7 @@ impl OfficeTool for WebSearchTool {
                     error: None,
                     artifacts: Some(vec![search_artifact]),
                     observation,
+                    needs_auth: None,
                     continue_loop: None,
                 }
             }

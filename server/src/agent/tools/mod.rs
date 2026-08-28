@@ -51,8 +51,13 @@ pub async fn register_all_tools() {
         .await;
     REGISTRY.register(Arc::new(web_search_generic::WebSearchTool)).await;
     REGISTRY.register(Arc::new(feishu_tools::FeishuDocReadTool)).await;
+    REGISTRY.register(Arc::new(feishu_tools::FeishuDocCreateTool)).await;
     REGISTRY.register(Arc::new(feishu_tools::FeishuBitableQueryTool)).await;
+    REGISTRY.register(Arc::new(feishu_tools::FeishuBitableCreateRecordTool)).await;
     REGISTRY.register(Arc::new(feishu_tools::FeishuCalendarListTool)).await;
+    REGISTRY.register(Arc::new(feishu_tools::FeishuCalendarCreateEventTool)).await;
+    REGISTRY.register(Arc::new(feishu_tools::FeishuDriveListTool)).await;
+    REGISTRY.register(Arc::new(feishu_tools::FeishuWikiSearchTool)).await;
 
     let tools = REGISTRY.list().await;
     tracing::info!(

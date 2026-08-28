@@ -4,10 +4,10 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;
 
 use crate::auth::middleware::AuthUser;
-use crate::db::{tenant_repo, user_repo};
+use crate::db::{settings_repo, tenant_repo, user_repo};
 use crate::error::AppError;
 use crate::models::{
-    FeishuLoginRequest, InviteRequest, LoginRequest, RegisterRequest, TokenResponse,
+    FeishuLoginRequest, FeishuToken, InviteRequest, LoginRequest, RegisterRequest, TokenResponse,
     VerificationLoginRequest,
 };
 use crate::state;
@@ -283,6 +283,9 @@ async fn feishu_login(
         }
     };
 
+    // 4. 持久化飞书 user token（供飞书工具按用户身份调用；支持增量授权 + 刷新）
+    save_feishu_token(&pool, &user.id, open_id, &token_json).await;
+
     let token = crate::auth::create_token(&user)?;
     Ok(Json(TokenResponse {
         access_token: token,
@@ -299,4 +302,47 @@ async fn feishu_config() -> Result<Json<serde_json::Value>, AppError> {
         "app_id": cfg.feishu_app_id,
         "redirect_uri": cfg.feishu_redirect_uri,
     })))
+}
+
+/// 把飞书 OAuth 拿到的 user token 持久化到该用户的 user_settings（支持增量授权合并 scope）
+async fn save_feishu_token(
+    pool: &crate::db::DbPool,
+    user_id: &str,
+    open_id: &str,
+    token_json: &serde_json::Value,
+) {
+    let access_token = token_json.get("access_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let refresh_token = token_json.get("refresh_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let expires_in = token_json.get("expires_in").and_then(|v| v.as_i64()).unwrap_or(7200);
+    let refresh_expires_in = token_json.get("refresh_token_expires_in").and_then(|v| v.as_i64()).unwrap_or(0);
+    let new_scopes = token_json.get("scope").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    let now = chrono::Utc::now().timestamp();
+
+    // 读现有 settings，合并 scope（增量授权：新授权的 scope 追加到已有）
+    if let Ok(Some(mut settings)) = settings_repo::find_by_user(pool, user_id).await {
+        let existing = settings.feishu_token.clone();
+        let merged_scopes = merge_scopes(&existing.scopes, &new_scopes);
+        settings.feishu_token = FeishuToken {
+            user_access_token: if access_token.is_empty() { existing.user_access_token } else { access_token },
+            refresh_token: if refresh_token.is_empty() { existing.refresh_token } else { refresh_token },
+            expires_at: now + expires_in,
+            refresh_expires_at: if refresh_expires_in > 0 { now + refresh_expires_in } else { existing.refresh_expires_at },
+            scopes: merged_scopes,
+            open_id: open_id.to_string(),
+        };
+        let _ = settings_repo::save_for_user(pool, user_id, &settings).await;
+    }
+}
+
+/// 合并两个空格分隔的 scope 列表（去重）
+fn merge_scopes(a: &str, b: &str) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for scope in a.split_whitespace().chain(b.split_whitespace()) {
+        if !scope.is_empty() && seen.insert(scope.to_string()) {
+            result.push(scope.to_string());
+        }
+    }
+    result.join(" ")
 }

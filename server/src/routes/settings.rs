@@ -59,6 +59,7 @@ pub fn default_settings() -> AppSettings {
             provider: "auto".into(),
             ..Default::default()
         },
+        feishu_token: Default::default(),
         updated_at: chrono::Utc::now().to_rfc3339(),
     }
 }

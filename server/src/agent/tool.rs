@@ -92,6 +92,9 @@ pub struct ToolResult {
     pub observation: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub continue_loop: Option<bool>,
+    /// 需要用户授权（飞书等）：值为缺失的 scope
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs_auth: Option<String>,
 }
 
 impl ToolResult {
@@ -103,6 +106,7 @@ impl ToolResult {
             artifacts: Some(artifacts),
             observation: observation.into(),
             continue_loop: None,
+            needs_auth: None,
         }
     }
 
@@ -115,6 +119,20 @@ impl ToolResult {
             artifacts: None,
             observation: obs,
             continue_loop: None,
+            needs_auth: None,
+        }
+    }
+
+    /// 需要用户授权（飞书）。scope 为缺失的授权范围。
+    pub fn err_needs_auth(scope: &str) -> Self {
+        Self {
+            success: false,
+            data: None,
+            error: Some(format!("需要飞书授权：{scope}")),
+            artifacts: None,
+            observation: format!("此操作需要用户授权飞书权限「{scope}」，请引导用户完成授权。"),
+            continue_loop: None,
+            needs_auth: Some(scope.to_string()),
         }
     }
 }

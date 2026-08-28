@@ -3,7 +3,7 @@ import type React from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth-store'
 import { usePPTStore } from '@/stores/ppt-store'
-import { chatApi, docApi, excelApi, pptApi, sessionApi, projectApi, settingsApi, fileApi } from '@/api'
+import { chatApi, docApi, excelApi, pptApi, sessionApi, projectApi, settingsApi, fileApi, authApi } from '@/api'
 import { ChatPanel } from '@/components/chat/ChatPanel'
 import { SlidePreview } from '@/components/preview/SlidePreview'
 import { ConversationSidebar } from '@/components/history/ConversationSidebar'
@@ -198,6 +198,8 @@ export default function Studio() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [modelProfiles, setModelProfiles] = useState<LLMProfile[]>([])
+  // 飞书授权引导：needs_auth 信号触发
+  const [feishuAuthPrompt, setFeishuAuthPrompt] = useState<{ scope: string; toolName: string } | null>(null)
 
   const activeArtifact = artifacts.find((artifact) => artifact.id === activeArtifactId) || null
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -771,6 +773,20 @@ export default function Studio() {
 
   const handleModelChange = (model: string) => {
     setSelectedModel(model)
+  }
+
+  // 飞书授权：跳转飞书授权页（带 scope），授权后回调会刷新页面并走增量授权
+  const handleFeishuAuth = async () => {
+    if (!feishuAuthPrompt?.scope) return
+    try {
+      const { data } = await authApi.feishuConfig()
+      const redirect = data.redirect_uri || `${window.location.origin}/login`
+      const url = `https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=${data.app_id}&redirect_uri=${encodeURIComponent(redirect)}&scope=${encodeURIComponent(feishuAuthPrompt.scope)}&state=${Date.now()}`
+      window.open(url, '_blank')
+      setFeishuAuthPrompt(null)
+    } catch {
+      showToast('获取飞书授权配置失败', 'error')
+    }
   }
 
   const handleSelectSlide = (index: number) => {
@@ -1349,6 +1365,10 @@ export default function Studio() {
               const detail = data.error || data.result?.error || data.result?.observation || ''
               if (data.success) {
                 setProcessLogs((logs) => [...logs.slice(-8), `工具 ${toolName} ✓ 完成`])
+              } else if (data.needs_auth) {
+                // 飞书工具需要用户授权
+                setProcessLogs((logs) => [...logs.slice(-8), `工具 ${toolName} 需要飞书授权`])
+                setFeishuAuthPrompt({ scope: data.needs_auth, toolName })
               } else {
                 const message = detail ? String(detail).slice(0, 300) : '未返回具体错误'
                 setStreamStatus(`工具 ${toolName} 失败：${message}`)
@@ -2018,6 +2038,39 @@ export default function Studio() {
             >
               <X className="h-3.5 w-3.5" />
             </button>
+          </div>
+        </div>
+      )}
+      {feishuAuthPrompt && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={() => setFeishuAuthPrompt(null)}>
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary-50 text-primary-600">
+                <Info className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-surface-950">需要飞书授权</h3>
+                <p className="text-xs text-surface-500">工具「{feishuAuthPrompt.toolName}」需要额外权限</p>
+              </div>
+            </div>
+            <div className="mb-5 rounded-2xl bg-surface-50 px-4 py-3">
+              <p className="text-xs text-surface-500">该操作需要你的飞书账号授权以下权限：</p>
+              <code className="mt-1 block break-all font-mono text-xs text-primary-700">{feishuAuthPrompt.scope}</code>
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => setFeishuAuthPrompt(null)}
+                className="rounded-full px-4 py-2 text-sm font-medium text-surface-600 transition hover:bg-surface-100"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleFeishuAuth}
+                className="inline-flex items-center gap-2 rounded-full bg-primary-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-primary-700"
+              >
+                去飞书授权
+              </button>
+            </div>
           </div>
         </div>
       )}
