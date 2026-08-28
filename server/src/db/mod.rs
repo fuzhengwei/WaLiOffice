@@ -3,6 +3,7 @@ pub mod notification_repo;
 pub mod project_repo;
 pub mod session_repo;
 pub mod settings_repo;
+pub mod tenant_repo;
 pub mod user_repo;
 
 use anyhow::Result;
@@ -65,11 +66,42 @@ async fn run_migrations_sqlite(pool: &sqlx::SqlitePool) -> Result<()> {
             .await?;
     }
 
+    // 多租户增量迁移：为旧表补充 tenant_id 列（若不存在）
+    ensure_sqlite_column(pool, "users", "tenant_id", "TEXT").await?;
+    ensure_sqlite_column(pool, "projects", "tenant_id", "TEXT").await?;
+    ensure_sqlite_column(pool, "sessions", "tenant_id", "TEXT").await?;
+    ensure_sqlite_column(pool, "tasks", "tenant_id", "TEXT").await?;
+    ensure_sqlite_column(pool, "folders", "tenant_id", "TEXT").await?;
+    ensure_sqlite_column(pool, "files", "tenant_id", "TEXT").await?;
+    ensure_sqlite_column(pool, "notifications", "tenant_id", "TEXT").await?;
+    ensure_sqlite_column(pool, "user_settings", "tenant_id", "TEXT").await?;
+
+    Ok(())
+}
+
+async fn ensure_sqlite_column(
+    pool: &sqlx::SqlitePool,
+    table: &str,
+    column: &str,
+    ty: &str,
+) -> Result<()> {
+    let exists: bool = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('{table}') WHERE name = '{column}'"
+    ))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    if !exists {
+        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"))
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 
 async fn run_migrations_mysql(pool: &sqlx::MySqlPool) -> Result<()> {
-    // 检查 users 表是否已存在，存在则跳过迁移（避免每次重启清空数据）
+    // 检查 users 表是否已存在
     let table_exists: bool = sqlx::query_scalar(
         "SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'users'"
     )
@@ -78,12 +110,76 @@ async fn run_migrations_mysql(pool: &sqlx::MySqlPool) -> Result<()> {
     .unwrap_or(false);
 
     if table_exists {
-        info!("📦 MySQL 表已存在，跳过迁移");
+        info!("📦 MySQL 表已存在，跳过全量迁移，执行增量多租户迁移");
+        run_mysql_incremental(pool).await?;
         return Ok(());
     }
 
     let sql = include_str!("../../../migrations/001_init_mysql.sql");
     sqlx::raw_sql(sql).execute(pool).await?;
+    Ok(())
+}
+
+/// 对已有旧库做增量迁移：确保 tenants 表存在 + 各业务表补充 tenant_id 列
+async fn run_mysql_incremental(pool: &sqlx::MySqlPool) -> Result<()> {
+    // 确保 tenants 表存在
+    let tenants_exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'tenants'"
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    if !tenants_exists {
+        sqlx::raw_sql(
+            "CREATE TABLE tenants (
+                id VARCHAR(36) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                slug VARCHAR(255) UNIQUE NOT NULL,
+                plan VARCHAR(50) NOT NULL DEFAULT 'free',
+                status VARCHAR(50) NOT NULL DEFAULT 'active',
+                created_at VARCHAR(50) NOT NULL,
+                updated_at VARCHAR(50) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    // 逐表补充 tenant_id 列（MySQL 支持 ADD COLUMN IF NOT EXISTS 从 8.0.29 起，
+    // 为兼容旧版本，先查 information_schema 再决定是否 ADD）
+    ensure_mysql_column(pool, "users", "tenant_id", "VARCHAR(36) NULL").await?;
+    ensure_mysql_column(pool, "projects", "tenant_id", "VARCHAR(36) NULL").await?;
+    ensure_mysql_column(pool, "sessions", "tenant_id", "VARCHAR(36) NULL").await?;
+    ensure_mysql_column(pool, "tasks", "tenant_id", "VARCHAR(36) NULL").await?;
+    ensure_mysql_column(pool, "folders", "tenant_id", "VARCHAR(36) NULL").await?;
+    ensure_mysql_column(pool, "files", "tenant_id", "VARCHAR(36) NULL").await?;
+    ensure_mysql_column(pool, "notifications", "tenant_id", "VARCHAR(36) NULL").await?;
+    ensure_mysql_column(pool, "user_settings", "tenant_id", "VARCHAR(36) NULL").await?;
+
+    Ok(())
+}
+
+async fn ensure_mysql_column(
+    pool: &sqlx::MySqlPool,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+    )
+    .bind(table)
+    .bind(column)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    if !exists {
+        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"))
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 

@@ -3,9 +3,63 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
+    pub tenant_id: Option<String>,
     pub username: String,
     pub email: Option<String>,
     pub avatar: Option<String>,
+    pub role: String,
+}
+
+impl User {
+    /// 是否平台级超级管理员
+    pub fn is_super_admin(&self) -> bool {
+        self.role == "super_admin"
+    }
+
+    /// 是否租户管理员（或超管）
+    pub fn is_tenant_admin(&self) -> bool {
+        matches!(self.role.as_str(), "super_admin" | "tenant_admin")
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tenant {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub plan: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateTenantRequest {
+    pub name: String,
+    pub slug: String,
+    #[serde(default)]
+    pub plan: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateTenantRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub plan: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TenantMemberRequest {
+    pub user_id: String,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateUserRoleRequest {
     pub role: String,
 }
 
@@ -93,6 +147,8 @@ pub struct RegisterRequest {
     pub password: String,
     #[serde(default)]
     pub email: Option<String>,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 // ── Chat ──

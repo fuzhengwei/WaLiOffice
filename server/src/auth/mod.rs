@@ -12,6 +12,7 @@ pub struct Claims {
     pub sub: String, // user id
     pub username: String,
     pub role: String,
+    pub tenant_id: Option<String>,
     pub exp: usize,
 }
 
@@ -22,6 +23,7 @@ pub fn create_token(user: &User) -> Result<String> {
         sub: user.id.clone(),
         username: user.username.clone(),
         role: user.role.clone(),
+        tenant_id: user.tenant_id.clone(),
         exp,
     };
     let token = encode(

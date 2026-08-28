@@ -1,30 +1,46 @@
+-- 租户表
+CREATE TABLE IF NOT EXISTS tenants (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    plan TEXT NOT NULL DEFAULT 'free',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- 用户表
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT,
     username TEXT UNIQUE NOT NULL,
     email TEXT UNIQUE,
     password_hash TEXT NOT NULL,
     avatar TEXT,
-    role TEXT NOT NULL DEFAULT 'user',
+    role TEXT NOT NULL DEFAULT 'member',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
 -- 项目表
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT,
     title TEXT NOT NULL,
     description TEXT,
     tool_kind TEXT NOT NULL DEFAULT 'general',
     owner_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    FOREIGN KEY (owner_id) REFERENCES users(id)
+    FOREIGN KEY (owner_id) REFERENCES users(id),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
 -- 会话表
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT,
     owner_id TEXT NOT NULL,
     project_id TEXT,
     tool_kind TEXT,
@@ -35,7 +51,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (owner_id) REFERENCES users(id),
-    FOREIGN KEY (project_id) REFERENCES projects(id)
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
 -- 会话消息表
@@ -64,6 +81,7 @@ CREATE TABLE IF NOT EXISTS session_artifacts (
 -- 任务表
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT,
     owner_id TEXT NOT NULL,
     title TEXT NOT NULL,
     description TEXT,
@@ -82,6 +100,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 -- 文件夹表
 CREATE TABLE IF NOT EXISTS folders (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT,
     owner_id TEXT NOT NULL,
     name TEXT NOT NULL,
     parent_id TEXT,
@@ -93,6 +112,7 @@ CREATE TABLE IF NOT EXISTS folders (
 -- 文件表
 CREATE TABLE IF NOT EXISTS files (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT,
     owner_id TEXT NOT NULL,
     name TEXT NOT NULL,
     file_path TEXT NOT NULL,
@@ -110,6 +130,7 @@ CREATE TABLE IF NOT EXISTS files (
 -- 通知表
 CREATE TABLE IF NOT EXISTS notifications (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT,
     user_id TEXT NOT NULL,
     type TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -123,6 +144,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 -- 用户设置表
 CREATE TABLE IF NOT EXISTS user_settings (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT,
     user_id TEXT NOT NULL UNIQUE,
     payload TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -139,20 +161,29 @@ CREATE TABLE IF NOT EXISTS system_settings (
 );
 
 -- 索引
+CREATE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug);
+CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
+CREATE INDEX IF NOT EXISTS idx_projects_tenant ON projects(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_projects_kind ON projects(tool_kind);
 CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_artifacts_session ON session_artifacts(session_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_tenant ON tasks(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date);
 CREATE INDEX IF NOT EXISTS idx_files_owner ON files(owner_id);
+CREATE INDEX IF NOT EXISTS idx_files_tenant ON files(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);
 CREATE INDEX IF NOT EXISTS idx_folders_owner ON folders(owner_id);
+CREATE INDEX IF NOT EXISTS idx_folders_tenant ON folders(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_tenant ON notifications(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(user_id, is_read);
 CREATE INDEX IF NOT EXISTS idx_user_settings_user ON user_settings(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_settings_tenant ON user_settings(tenant_id);

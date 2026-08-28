@@ -1,11 +1,12 @@
 -- ============================================================
--- WaLiOffice MySQL 初始化脚本
+-- WaLiOffice MySQL 初始化脚本（多租户版）
 -- 每次启动会先 DROP 再 CREATE，清空旧数据重建表结构
 -- ============================================================
 
 -- ── 临时关闭外键检查，避免 DROP 顺序冲突 ──
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS tenants;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS sessions;
@@ -20,21 +21,36 @@ DROP TABLE IF EXISTS system_settings;
 
 SET FOREIGN_KEY_CHECKS = 1;
 
--- 用户表
+-- 租户表
+CREATE TABLE tenants (
+    id VARCHAR(36) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    plan VARCHAR(50) NOT NULL DEFAULT 'free',
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    created_at VARCHAR(50) NOT NULL,
+    updated_at VARCHAR(50) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 用户表（tenant_id 归属租户；tenant_id 为 NULL 表示平台级用户/超管）
 CREATE TABLE users (
     id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NULL,
     username VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     avatar VARCHAR(500),
-    role VARCHAR(50) NOT NULL DEFAULT 'user',
+    role VARCHAR(50) NOT NULL DEFAULT 'member',
     created_at VARCHAR(50) NOT NULL,
-    updated_at VARCHAR(50) NOT NULL
+    updated_at VARCHAR(50) NOT NULL,
+    INDEX idx_users_tenant (tenant_id),
+    CONSTRAINT fk_users_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 项目表
 CREATE TABLE projects (
     id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NULL,
     title VARCHAR(500) NOT NULL,
     description VARCHAR(2000),
     tool_kind VARCHAR(100) NOT NULL DEFAULT 'general',
@@ -42,13 +58,16 @@ CREATE TABLE projects (
     created_at VARCHAR(50) NOT NULL,
     updated_at VARCHAR(50) NOT NULL,
     INDEX idx_projects_owner (owner_id),
+    INDEX idx_projects_tenant (tenant_id),
     INDEX idx_projects_kind (tool_kind),
-    INDEX idx_projects_updated (updated_at)
+    INDEX idx_projects_updated (updated_at),
+    CONSTRAINT fk_projects_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 会话表
 CREATE TABLE sessions (
     id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NULL,
     owner_id VARCHAR(36) NOT NULL,
     project_id VARCHAR(36),
     tool_kind VARCHAR(100),
@@ -59,7 +78,9 @@ CREATE TABLE sessions (
     created_at VARCHAR(50) NOT NULL,
     updated_at VARCHAR(50) NOT NULL,
     INDEX idx_sessions_owner (owner_id),
-    INDEX idx_sessions_updated (updated_at)
+    INDEX idx_sessions_tenant (tenant_id),
+    INDEX idx_sessions_updated (updated_at),
+    CONSTRAINT fk_sessions_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 会话消息表
@@ -88,6 +109,7 @@ CREATE TABLE session_artifacts (
 -- 任务表
 CREATE TABLE tasks (
     id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NULL,
     owner_id VARCHAR(36) NOT NULL,
     title VARCHAR(500) NOT NULL,
     description VARCHAR(2000),
@@ -100,25 +122,31 @@ CREATE TABLE tasks (
     created_at VARCHAR(50) NOT NULL,
     updated_at VARCHAR(50) NOT NULL,
     INDEX idx_tasks_owner (owner_id),
+    INDEX idx_tasks_tenant (tenant_id),
     INDEX idx_tasks_status (status),
     INDEX idx_tasks_priority (priority),
-    INDEX idx_tasks_due (due_date)
+    INDEX idx_tasks_due (due_date),
+    CONSTRAINT fk_tasks_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 文件夹表
 CREATE TABLE folders (
     id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NULL,
     owner_id VARCHAR(36) NOT NULL,
     name VARCHAR(500) NOT NULL,
     parent_id VARCHAR(36),
     created_at VARCHAR(50) NOT NULL,
     updated_at VARCHAR(50) NOT NULL,
-    INDEX idx_folders_owner (owner_id)
+    INDEX idx_folders_owner (owner_id),
+    INDEX idx_folders_tenant (tenant_id),
+    CONSTRAINT fk_folders_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 文件表
 CREATE TABLE files (
     id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NULL,
     owner_id VARCHAR(36) NOT NULL,
     name VARCHAR(500) NOT NULL,
     file_path VARCHAR(1000) NOT NULL,
@@ -130,12 +158,15 @@ CREATE TABLE files (
     created_at VARCHAR(50) NOT NULL,
     updated_at VARCHAR(50) NOT NULL,
     INDEX idx_files_owner (owner_id),
-    INDEX idx_files_folder (folder_id)
+    INDEX idx_files_tenant (tenant_id),
+    INDEX idx_files_folder (folder_id),
+    CONSTRAINT fk_files_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 通知表
 CREATE TABLE notifications (
     id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NULL,
     user_id VARCHAR(36) NOT NULL,
     type VARCHAR(100) NOT NULL,
     title VARCHAR(500) NOT NULL,
@@ -144,17 +175,22 @@ CREATE TABLE notifications (
     link VARCHAR(500),
     created_at VARCHAR(50) NOT NULL,
     INDEX idx_notifications_user (user_id),
-    INDEX idx_notifications_read (user_id, is_read)
+    INDEX idx_notifications_tenant (tenant_id),
+    INDEX idx_notifications_read (user_id, is_read),
+    CONSTRAINT fk_notifications_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 用户设置表
 CREATE TABLE user_settings (
     id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(36) NULL,
     user_id VARCHAR(36) NOT NULL UNIQUE,
     payload LONGTEXT NOT NULL,
     created_at VARCHAR(50) NOT NULL,
     updated_at VARCHAR(50) NOT NULL,
-    INDEX idx_user_settings_user (user_id)
+    INDEX idx_user_settings_user (user_id),
+    INDEX idx_user_settings_tenant (tenant_id),
+    CONSTRAINT fk_user_settings_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 系统设置表

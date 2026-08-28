@@ -9,6 +9,7 @@ pub mod notification;
 pub mod project;
 pub mod session;
 pub mod settings;
+pub mod tenant;
 
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
@@ -32,6 +33,7 @@ pub fn build_router() -> Router {
         .merge(project::router())
         .merge(notification::router())
         .merge(settings::router())
+        .merge(tenant::router())
         .merge(file::router())
         .merge(dashboard::router())
         .merge(doc_export::router())

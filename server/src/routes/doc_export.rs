@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
 
+use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
 use crate::render;
 
@@ -31,7 +32,7 @@ struct SheetExportReq {
     tables: Vec<render::xlsx_render::SheetTable>,
 }
 
-async fn export_docx(Json(req): Json<DocExportReq>) -> Result<Response, AppError> {
+async fn export_docx(_user: AuthUser, Json(req): Json<DocExportReq>) -> Result<Response, AppError> {
     let data = render::docx_render::DocData {
         title: req.title.clone(),
         sections: req.sections,
@@ -44,7 +45,7 @@ async fn export_docx(Json(req): Json<DocExportReq>) -> Result<Response, AppError
     Ok(export_response(&path, &filename))
 }
 
-async fn export_xlsx(Json(req): Json<SheetExportReq>) -> Result<Response, AppError> {
+async fn export_xlsx(_user: AuthUser, Json(req): Json<SheetExportReq>) -> Result<Response, AppError> {
     let data = render::xlsx_render::SheetData {
         title: req.title.clone(),
         tables: req.tables,
@@ -57,12 +58,24 @@ async fn export_xlsx(Json(req): Json<SheetExportReq>) -> Result<Response, AppErr
     Ok(export_response(&path, &filename))
 }
 
-async fn download_file(Path(filename): Path<String>) -> Result<Response, AppError> {
-    let path = render::output_path(&filename);
+async fn download_file(
+    _user: AuthUser,
+    Path(filename): Path<String>,
+) -> Result<Response, AppError> {
+    // 防路径穿越：只取纯文件名（去除目录/分隔符），并在 render 目录下解析
+    let base = std::path::Path::new(&filename)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    if base.is_empty() || base != filename {
+        return Err(AppError::NotFound("文件不存在".into()));
+    }
+    let path = render::output_path(&base);
     if !path.exists() {
         return Err(AppError::NotFound("文件不存在".into()));
     }
-    Ok(export_response(&path, &filename))
+    Ok(export_response(&path, &base))
 }
 
 fn export_response(path: &std::path::Path, filename: &str) -> Response {

@@ -29,6 +29,33 @@ pub async fn extract_user(parts: &Parts) -> Result<User, AppError> {
 #[derive(Clone)]
 pub struct AuthUser(pub User);
 
+/// 角色校验提取器：要求用户具备指定角色之一。
+/// 用法：`user: RequireRole<&'static [&'static str]>` 或自定义。
+#[derive(Clone)]
+pub struct RequireRole<const N: usize>(pub User);
+
+#[async_trait::async_trait]
+impl<S, const N: usize> axum::extract::FromRequestParts<S> for RequireRole<N>
+where
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let user = extract_user(parts).await?;
+        Ok(RequireRole(user))
+    }
+}
+
+/// 通用角色校验函数：检查 user.role 是否在允许列表中。
+pub fn ensure_role(user: &User, allowed: &[&str]) -> Result<(), AppError> {
+    if allowed.iter().any(|r| user.role.as_str() == *r) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden)
+    }
+}
+
 #[async_trait::async_trait]
 impl<S> axum::extract::FromRequestParts<S> for AuthUser
 where

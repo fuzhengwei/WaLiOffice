@@ -1,18 +1,7 @@
-mod agent;
-mod auth;
-mod config;
-mod db;
-mod error;
-mod file_extract;
-mod image_ocr;
-mod llm;
-mod models;
-mod render;
-mod routes;
-mod state;
-
 use std::net::SocketAddr;
 use tracing::info;
+
+use walioffice::{agent, auth, config, routes, state};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

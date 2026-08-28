@@ -880,7 +880,12 @@ async fn chat_stream(
 
     // 创建或获取会话
     let session = if let Some(ref sid) = req.session_id {
-        session_repo::find_by_id(&pool, sid).await?.ok_or(AppError::NotFound("会话不存在".into()))?
+        let s = session_repo::find_by_id(&pool, sid).await?.ok_or(AppError::NotFound("会话不存在".into()))?;
+        // 多租户隔离：校验会话归属当前用户
+        if s.owner_id != user.0.id {
+            return Err(AppError::Forbidden);
+        }
+        s
     } else {
         let title_source = if req.message.trim().is_empty() {
             req.attachments

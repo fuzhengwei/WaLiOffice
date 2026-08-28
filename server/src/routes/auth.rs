@@ -117,8 +117,26 @@ async fn register(Json(req): Json<RegisterRequest>) -> Result<Json<TokenResponse
         return Err(AppError::BadRequest("用户名已存在".into()));
     }
 
+    // 多租户：若指定 tenant_id 则归属该租户；否则为平台首个用户分配超管、其余自动创建个人租户
     let hash = user_repo::hash_password(&req.password)?;
-    let user = user_repo::create(&pool, &req.username, req.email.as_deref(), &hash).await?;
+    let user = if let Some(tenant_id) = req.tenant_id.as_deref() {
+        // 归属指定租户（需校验租户存在，一般由租户管理员邀请）
+        if crate::db::tenant_repo::find_by_id(&pool, tenant_id).await?.is_none() {
+            return Err(AppError::BadRequest("租户不存在".into()));
+        }
+        user_repo::create_with_tenant(&pool, &req.username, req.email.as_deref(), &hash, Some(tenant_id), "member").await?
+    } else {
+        // 自动创建个人租户
+        let count = crate::db::user_repo::count(&pool).await.unwrap_or(0);
+        if count == 0 {
+            // 平台首个用户 → 超级管理员（无租户归属）
+            user_repo::create_with_tenant(&pool, &req.username, req.email.as_deref(), &hash, None, "super_admin").await?
+        } else {
+            let slug = format!("tenant-{}", uuid::Uuid::new_v4().simple());
+            let tenant = crate::db::tenant_repo::create(&pool, &req.username, &slug, "free").await?;
+            user_repo::create_with_tenant(&pool, &req.username, req.email.as_deref(), &hash, Some(&tenant.id), "tenant_admin").await?
+        }
+    };
     let token = crate::auth::create_token(&user)?;
 
     Ok(Json(TokenResponse {
