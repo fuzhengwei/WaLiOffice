@@ -1061,34 +1061,38 @@ export function ChatPanel({
                 </div>
               </div>
             </div>
-            <div className="mt-1.5 flex items-center gap-1 overflow-x-auto rounded-[1.2rem] border border-black/[0.05] bg-[#f8f5ee]/86 px-2 py-1.5 backdrop-blur-sm md:flex-wrap">
-            {AGENT_TOOLS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onToolChange(item.id)}
-                disabled={isStreaming}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all disabled:opacity-50 ${
-                  activeTool === item.id
-                    ? 'border-surface-900 bg-surface-950 text-white shadow-sm'
-                    : 'border-black/5 bg-white/70 text-surface-600 backdrop-blur hover:bg-white hover:text-surface-900'
-                }`}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${toolDot[item.id] || 'bg-surface-400'}`} />
-                {item.shortName}
-              </button>
-            ))}
-            <div className="ml-auto flex shrink-0 items-center">
-              <ToolConfigDropdown
-                activeTool={activeTool}
-                toolConfig={toolConfig}
-                onToolConfigChange={onToolConfigChange}
-                disabled={isStreaming}
-              />
+            <div className="mt-1.5 rounded-[1.2rem] border border-black/[0.05] bg-[#f8f5ee]/86 px-2 py-1.5 backdrop-blur-sm">
+              <div className="flex items-center gap-1">
+                <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto md:flex-wrap">
+                  {AGENT_TOOLS.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onToolChange(item.id)}
+                      disabled={isStreaming}
+                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-all disabled:opacity-50 ${
+                        activeTool === item.id
+                          ? 'border-surface-900 bg-surface-950 text-white shadow-sm'
+                          : 'border-black/5 bg-white/70 text-surface-600 backdrop-blur hover:bg-white hover:text-surface-900'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${toolDot[item.id] || 'bg-surface-400'}`} />
+                      {item.shortName}
+                    </button>
+                  ))}
+                </div>
+                <div className="ml-2 flex shrink-0 items-center">
+                  <ToolConfigDropdown
+                    activeTool={activeTool}
+                    toolConfig={toolConfig}
+                    onToolConfigChange={onToolConfigChange}
+                    disabled={isStreaming}
+                  />
+                </div>
+              </div>
             </div>
           </div>
           </div>
-        </div>
       </div>
     </section>
   )
