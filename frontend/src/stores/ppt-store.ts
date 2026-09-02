@@ -22,6 +22,8 @@ interface ConversationState {
   selectedModel: string;
   activeProjectId: string | null;
   tabTitle: string;
+  pinned: boolean;
+  lastActiveAt: number;
 }
 
 export interface TabState extends ConversationState {
@@ -101,6 +103,8 @@ function createInitialTabState(tabId: string, overrides?: Partial<ConversationSt
     toolConfig: {},
     selectedModel: '',
     activeProjectId: null,
+    pinned: false,
+    lastActiveAt: Date.now(),
     ...overrides,
   };
 }
@@ -139,7 +143,7 @@ export const usePPTStore = create<PPTState>((set, get) => ({
     set((state) => {
       if (state.tabs[tabId]) {
         // tab 已存在，切换过去
-        return { activeTabId: tabId, ...syncFromTab(state, tabId) };
+        return { activeTabId: tabId, tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], lastActiveAt: Date.now() } }, ...syncFromTab(state, tabId) };
       }
       const tab = createInitialTabState(tabId, initialState);
       return {
@@ -172,14 +176,14 @@ export const usePPTStore = create<PPTState>((set, get) => ({
       }
       // 切换到最后一个 tab
       const nextActive = remainingIds[remainingIds.length - 1];
-      return { activeTabId: nextActive, tabs: newTabs, ...syncFromTab({ ...state, tabs: newTabs }, nextActive) };
+      return { activeTabId: nextActive, tabs: { ...newTabs, [nextActive]: { ...newTabs[nextActive], lastActiveAt: Date.now() } }, ...syncFromTab({ ...state, tabs: { ...newTabs, [nextActive]: { ...newTabs[nextActive], lastActiveAt: Date.now() } } }, nextActive) };
     });
   },
 
   switchTab: (tabId) => {
     set((state) => {
       if (!state.tabs[tabId]) return state;
-      return { activeTabId: tabId, ...syncFromTab(state, tabId) };
+      return { activeTabId: tabId, tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], lastActiveAt: Date.now() } }, ...syncFromTab(state, tabId) };
     });
   },
 

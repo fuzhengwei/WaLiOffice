@@ -6,6 +6,23 @@ import type { ChatMessage, ConversationRecord, PPTProject, ToolKind, ProjectMeta
 
 const LOGO_URL = '/logo.png'
 
+interface SidebarTaskItem {
+  id: string
+  title: string
+  tool: ToolKind
+  messageCount: number
+  isStreaming: boolean
+  streamPhase?: 'idle' | 'thinking' | 'generating' | 'finishing' | 'done' | 'error'
+  sessionId?: string | null
+  pinned?: boolean
+  lastActiveAt?: number
+  summary?: string
+  updated_at?: string
+  message_count?: number
+  project_id?: string
+  project_title?: string
+}
+
 interface ConversationSidebarProps {
   project: PPTProject | null
   messages: ChatMessage[]
@@ -18,7 +35,7 @@ interface ConversationSidebarProps {
   isStreaming?: boolean
   streamPhase?: 'idle' | 'thinking' | 'generating' | 'finishing' | 'done' | 'error'
   // 多 tab：本地 tab 列表（尚未保存到后端的对话）
-  localTabs?: { id: string; title: string; tool: ToolKind; messageCount: number; isStreaming: boolean; streamPhase?: 'idle' | 'thinking' | 'generating' | 'finishing' | 'done' | 'error'; sessionId?: string | null }[]
+  localTabs?: SidebarTaskItem[]
   activeTabId?: string | null
   onSelectTab?: (id: string) => void
   onToolChange: (tool: ToolKind) => void
@@ -149,14 +166,14 @@ export function ConversationSidebar({
   // 合并本地 tab 和 API 会话
   // localTabs 中已有 sessionId 的会去重匹配 conversations 中的已保存会话
   const savedSessionIds = new Set(conversations.map((c) => c.id))
-  const localOnlyTabs: ConversationRecord[] = localTabs
+  const localOnlyTabs: SidebarTaskItem[] = localTabs
     .filter((t) => !t.sessionId || !savedSessionIds.has(t.sessionId))
     .map((t) => ({
-      id: t.id,
+      ...t,
       title: t.title || '新对话',
-      tool: t.tool,
+      lastActiveAt: t.lastActiveAt || Date.now(),
       summary: t.isStreaming ? '正在处理...' : (t.messageCount > 0 ? `${t.messageCount} 条消息` : '空白对话'),
-      updated_at: new Date().toISOString(),
+      updated_at: new Date(t.lastActiveAt || Date.now()).toISOString(),
       message_count: t.messageCount,
       project_id: undefined,
     }))
@@ -201,8 +218,21 @@ export function ConversationSidebar({
     return item
   })
 
-  // 最终展示列表：本地 tab + API 会话，新对话在最上面
-  const allConversations = [...localOnlyTabs, ...boostedConversations]
+  const localTabsKeyword = searchQuery.trim()
+  const filteredLocalTabs = localTabsKeyword
+    ? localOnlyTabs.filter((item) =>
+        includesKeyword(item.title, localTabsKeyword)
+        || includesKeyword(item.sessionId || '', localTabsKeyword)
+      )
+    : localOnlyTabs
+  const pinnedLocalTabs = [...filteredLocalTabs].filter((item) => item.pinned).sort((a, b) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
+  const recentLocalTabs = [...filteredLocalTabs].filter((item) => !item.pinned).sort((a, b) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
+  const recentLocalTabsByTool = new Map<ToolKind, SidebarTaskItem[]>()
+  for (const item of recentLocalTabs) {
+    const list = recentLocalTabsByTool.get(item.tool) || []
+    list.push(item)
+    recentLocalTabsByTool.set(item.tool, list)
+  }
 
   const { filteredProjects, unassignedConversations, conversationsByProject } = useMemo(() => {
     const keyword = searchQuery.trim()
@@ -210,12 +240,12 @@ export function ConversationSidebar({
       ? projects.filter((proj) => includesKeyword(proj.title, keyword) || includesKeyword(proj.description, keyword))
       : projects
     const filteredConversations = keyword
-      ? allConversations.filter((item) =>
+      ? boostedConversations.filter((item) =>
           includesKeyword(item.title, keyword)
           || includesKeyword(item.summary, keyword)
           || includesKeyword(item.project_title, keyword)
         )
-      : allConversations
+      : boostedConversations
     const byProject = new Map<string, ConversationRecord[]>()
     for (const proj of filteredProjects) {
       byProject.set(proj.id, sortConversations(filteredConversations.filter((c) => c.project_id === proj.id)))
@@ -225,7 +255,7 @@ export function ConversationSidebar({
       unassignedConversations: sortConversations(filteredConversations.filter((c) => !c.project_id)),
       conversationsByProject: byProject,
     }
-  }, [projects, allConversations, searchQuery])
+  }, [projects, boostedConversations, searchQuery])
 
   const workspaceLinks = [
     { to: '/', label: '智能助手', icon: Sparkles, active: location.pathname === '/' },
@@ -270,7 +300,7 @@ export function ConversationSidebar({
     setDraggingId(null)
     setDropTarget(null)
     if (!id || id === 'current' || id === beforeId) return
-    const item = allConversations.find((conv) => conv.id === id)
+    const item = boostedConversations.find((conv) => conv.id === id)
     if (!item) return
     if ((item.project_id || null) === projectId && id === beforeId) return
     onMoveConversation?.(id, projectId, beforeId)
@@ -285,7 +315,7 @@ export function ConversationSidebar({
     dropTarget?.projectId === projectId && dropTarget.beforeId === beforeId
   )
 
-  const renderConversationItem = (item: ConversationRecord, child = false) => {
+  const renderConversationItem = (item: ConversationRecord | SidebarTaskItem, child = false) => {
     const isLocalTab = item.id.startsWith('tab-')
     const active = isLocalTab
       ? item.id === activeTabId
@@ -342,7 +372,7 @@ export function ConversationSidebar({
             <span className="shrink-0 text-[9px] font-medium text-surface-400">{formatTime(item.updated_at) || '刚刚'}</span>
           </button>
 
-          {item.id !== 'current' && hovered === item.id && (
+          {item.id !== 'current' && !isLocalTab && hovered === item.id && (
             <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-full bg-[#f7f2e8]/95 p-0.5 shadow-sm ring-1 ring-black/[0.06]" onClick={(e) => e.stopPropagation()}>
               {onRenameConversation && (
                 <button type="button" onClick={() => handleRenameConversation(item)} className="rounded-full p-1 text-surface-400 hover:bg-white hover:text-surface-800" title="修改标题">
@@ -487,6 +517,53 @@ export function ConversationSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
+        {filteredLocalTabs.length > 0 && (
+          <section className="mb-4">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-surface-400">任务空间</span>
+              <span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] font-bold text-surface-500">{filteredLocalTabs.length}</span>
+            </div>
+
+            {pinnedLocalTabs.length > 0 && (
+              <div className="mb-3 space-y-1.5">
+                <div className="flex items-center gap-1 px-1 text-[10px] font-black uppercase tracking-[0.18em] text-amber-500">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  固定任务
+                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-600">{pinnedLocalTabs.length}</span>
+                </div>
+                <div className="space-y-1.5">
+                  {pinnedLocalTabs.map((item) => renderConversationItem(item))}
+                </div>
+              </div>
+            )}
+
+            {recentLocalTabsByTool.size > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-1 px-1 text-[10px] font-black uppercase tracking-[0.18em] text-surface-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-surface-400" />
+                  最近任务
+                </div>
+                <div className="space-y-3">
+                  {Array.from(recentLocalTabsByTool.entries())
+                    .sort((a, b) => (a[0] === 'general' ? -1 : b[0] === 'general' ? 1 : toolLabel[a[0]].localeCompare(toolLabel[b[0]])))
+                    .map(([tool, items]) => (
+                      <div key={tool} className="space-y-1.5">
+                        <div className="flex items-center gap-1 px-1 text-[10px] font-semibold text-surface-500">
+                          <span className={`h-1.5 w-1.5 rounded-full ${toolColors[tool] || 'bg-surface-400'}`} />
+                          <span>{toolLabel[tool]}</span>
+                          <span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] font-bold text-surface-500">{items.length}</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {items.map((item) => renderConversationItem(item))}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
         <div className="mb-3 flex items-center justify-between px-1">
           <span className="text-[10px] font-black uppercase tracking-[0.18em] text-surface-400">项目空间</span>
           <span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] font-bold text-surface-500">{filteredProjects.length}</span>

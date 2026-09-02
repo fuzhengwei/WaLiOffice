@@ -1,4 +1,4 @@
-import { X, Plus, Loader2, MessageSquare } from 'lucide-react'
+import { X, Plus, Loader2, MessageSquare, Pin, PinOff } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import type { ToolKind } from '@/types'
 
@@ -11,6 +11,7 @@ export interface TabConversation {
   streamStatus: string
   messageCount: number
   hasArtifacts: boolean
+  pinned?: boolean
 }
 
 interface ConversationTabsProps {
@@ -19,7 +20,10 @@ interface ConversationTabsProps {
   onSelectTab: (id: string) => void
   onCloseTab: (id: string) => void
   onNewTab: () => void
+  onTogglePinTab?: (id: string) => void
   canNewTab?: boolean
+  title?: string
+  description?: string
 }
 
 const toolDotColors: Record<ToolKind, string> = {
@@ -48,7 +52,10 @@ export function ConversationTabs({
   onSelectTab,
   onCloseTab,
   onNewTab,
+  onTogglePinTab,
   canNewTab = true,
+  title = '任务切换',
+  description = '多个任务可并行打开，点击即可快速切换上下文',
 }: ConversationTabsProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLButtonElement>(null)
@@ -73,10 +80,34 @@ export function ConversationTabs({
   if (tabs.length === 0) return null
 
   return (
-    <div className="relative z-10 flex h-10 shrink-0 items-center border-b border-black/[0.05] bg-[#f6f4ef]/60 backdrop-blur-xl">
+    <div className="relative z-10 shrink-0 border-b border-black/[0.05] bg-[#f6f4ef]/60 backdrop-blur-xl">
+      <div className="flex items-center justify-between gap-3 px-3 py-2 md:px-5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.18em] text-surface-400">{title}</span>
+            <span className="rounded-full bg-white/75 px-2 py-0.5 text-[10px] font-bold text-surface-500 ring-1 ring-black/[0.04]">
+              {tabs.length} 个
+            </span>
+          </div>
+          <div className="mt-0.5 truncate text-[11px] text-surface-500">{description}</div>
+        </div>
+
+        {canNewTab && (
+          <button
+            type="button"
+            onClick={onNewTab}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-white/75 px-3 text-[11px] font-semibold text-surface-700 ring-1 ring-black/[0.05] transition-all hover:bg-white hover:text-surface-900"
+            title="新建任务"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            新建任务
+          </button>
+        )}
+      </div>
+
       <div
         ref={scrollRef}
-        className="flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-2 scrollbar-hide"
+        className="flex min-w-0 items-center gap-0.5 overflow-x-auto px-2 pb-2 scrollbar-hide"
         style={{ scrollbarWidth: 'none' }}
       >
         {tabs.map((tab) => {
@@ -99,7 +130,6 @@ export function ConversationTabs({
               }`}
               title={tab.title}
             >
-              {/* 左侧状态指示 */}
               <span className="relative flex shrink-0 items-center justify-center">
                 {isWorking ? (
                   <span className="relative flex h-2 w-2">
@@ -115,12 +145,33 @@ export function ConversationTabs({
                 )}
               </span>
 
-              {/* 标题 */}
               <span className="max-w-[140px] truncate text-[12px] font-semibold leading-4">
                 {tab.title}
               </span>
 
-              {/* 进行中状态文字 */}
+              {tab.pinned && (
+                <Pin className="h-3 w-3 shrink-0 text-amber-500" />
+              )}
+
+              {onTogglePinTab && (
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onTogglePinTab(tab.id)
+                  }}
+                  className={`ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-all ${
+                    tab.pinned
+                      ? 'text-amber-500 hover:bg-amber-50 hover:text-amber-600'
+                      : 'text-surface-300 opacity-0 hover:bg-surface-100 hover:text-surface-600 group-hover:opacity-100'
+                  }`}
+                  title={tab.pinned ? '取消固定' : '固定任务'}
+                >
+                  {tab.pinned ? <PinOff className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
+                </span>
+              )}
+
               {isWorking && (
                 <span className="hidden items-center gap-1 text-[10px] font-medium text-surface-400 sm:inline-flex">
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
@@ -128,7 +179,6 @@ export function ConversationTabs({
                 </span>
               )}
 
-              {/* 关闭按钮 */}
               <span
                 role="button"
                 tabIndex={-1}
@@ -141,12 +191,11 @@ export function ConversationTabs({
                     ? 'text-surface-400 hover:bg-surface-100 hover:text-surface-700'
                     : 'text-surface-300 opacity-0 hover:bg-surface-100 hover:text-surface-600 group-hover:opacity-100'
                 }`}
-                title="关闭对话"
+                title="关闭任务"
               >
                 <X className="h-3 w-3" />
               </span>
 
-              {/* 活跃底线 */}
               {isActive && (
                 <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-surface-950/70" />
               )}
@@ -154,18 +203,6 @@ export function ConversationTabs({
           )
         })}
       </div>
-
-      {/* 新建对话按钮 */}
-      {canNewTab && (
-        <button
-          type="button"
-          onClick={onNewTab}
-          className="ml-1 mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-surface-400 transition-all hover:bg-white/70 hover:text-surface-700"
-          title="新建对话"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
-      )}
     </div>
   )
 }

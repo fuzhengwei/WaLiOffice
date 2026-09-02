@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { usePPTStore } from '@/stores/ppt-store'
 import { chatApi, docApi, excelApi, pptApi, sessionApi, projectApi, settingsApi, fileApi } from '@/api'
 import { ChatPanel } from '@/components/chat/ChatPanel'
+import { ConversationTabs } from '@/components/chat/ConversationTabs'
 import { SlidePreview } from '@/components/preview/SlidePreview'
 import { ConversationSidebar } from '@/components/history/ConversationSidebar'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
@@ -522,6 +523,12 @@ export default function Studio() {
     }
   }
 
+  const handleTogglePinTab = (tabId: string) => {
+    const tab = tabs[tabId]
+    if (!tab) return
+    updateTab(tabId, { pinned: !tab.pinned })
+  }
+
   // 构建传给侧边栏的 tabs 数据
   const conversationTabs = Object.values(tabs).map((tab) => ({
     id: tab.tabId,
@@ -532,6 +539,8 @@ export default function Studio() {
     streamStatus: tab.streamStatus,
     messageCount: tab.messages.length,
     hasArtifacts: tab.artifacts.length > 0,
+    pinned: tab.pinned,
+    lastActiveAt: tab.lastActiveAt,
   }))
 
   const handleNewProject = async () => {
@@ -1736,7 +1745,7 @@ export default function Studio() {
             activeConversationId={sessionId}
             isStreaming={isStreaming}
             streamPhase={streamPhase}
-            localTabs={conversationTabs.map((t) => ({ id: t.id, title: t.title, tool: t.tool, messageCount: t.messageCount, isStreaming: t.isStreaming, streamPhase: t.streamPhase, sessionId: tabs[t.id]?.sessionId }))}
+            localTabs={conversationTabs.map((t) => ({ id: t.id, title: t.title, tool: t.tool, messageCount: t.messageCount, isStreaming: t.isStreaming, streamPhase: t.streamPhase, sessionId: tabs[t.id]?.sessionId, pinned: t.pinned, lastActiveAt: t.lastActiveAt }))}
             activeTabId={activeTabId}
             onSelectTab={handleSelectTab}
             onToolChange={handleToolChange}
@@ -1774,7 +1783,7 @@ export default function Studio() {
                 activeConversationId={sessionId}
                 isStreaming={isStreaming}
                 streamPhase={streamPhase}
-                localTabs={conversationTabs.map((t) => ({ id: t.id, title: t.title, tool: t.tool, messageCount: t.messageCount, isStreaming: t.isStreaming, streamPhase: t.streamPhase, sessionId: tabs[t.id]?.sessionId }))}
+                localTabs={conversationTabs.map((t) => ({ id: t.id, title: t.title, tool: t.tool, messageCount: t.messageCount, isStreaming: t.isStreaming, streamPhase: t.streamPhase, sessionId: tabs[t.id]?.sessionId, pinned: t.pinned, lastActiveAt: t.lastActiveAt }))}
                 activeTabId={activeTabId}
                 onSelectTab={(id) => { handleSelectTab(id); setMobileSidebarOpen(false) }}
                 onToolChange={handleToolChange}
@@ -1850,6 +1859,17 @@ export default function Studio() {
               </button>
             </div>
           </header>
+
+          <ConversationTabs
+            tabs={conversationTabs}
+            activeTabId={activeTabId}
+            onSelectTab={handleSelectTab}
+            onCloseTab={handleCloseTab}
+            onNewTab={handleNewTab}
+            onTogglePinTab={handleTogglePinTab}
+            title="任务切换"
+            description="文档、图片、视频、绘图可并行开启，点击标签快速切换上下文"
+          />
 
           <div className="min-h-0 flex-1 overflow-hidden">
             {activeView === 'settings' ? (
