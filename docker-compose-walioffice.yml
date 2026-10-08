@@ -13,7 +13,8 @@ version: "3.8"
 
 services:
   walioffice:
-    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/walioffice:1.2.3
+#    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/walioffice:1.2.3
+    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/walioffice:run-28
     container_name: walioffice
     ports:
       - "8000:8000"
@@ -30,7 +31,7 @@ services:
       # ── 登录配置 ──
       # 登录鉴权开关：true 需要登录；false 关闭登录，所有请求自动使用 guest 默认用户
       # （适合个人自用部署；多人部署请保持 true）
-      AIPPT_AUTH_ENABLED: "true"
+      AIPPT_AUTH_ENABLED: "false"
 
       # 验证码登录使用的验证服务地址（这里使用了公众号验证登录，你可以自己实现登录的接口。与星球里《openai 应用项目》的登录一致）https://t.zsxq.com/kEhGG
       WALIOFFICE_X_API_AUTH_LOGIN_URL: https://x-api.itedus.cn/api/v1/auth/login
@@ -39,28 +40,28 @@ services:
       # 方式一：外部 MySQL（当前配置）
       #   确保远程 MySQL 已建库 walioffice，且字符集为 utf8mb4
       #   charset=utf8mb4 必须带，否则中文乱码
-      DATABASE_URL: mysql://root:123456@127.0.0.1:3306/walioffice?charset=utf8mb4
-      DB_MAX_CONNECTIONS: "8"
+#      DATABASE_URL: mysql://root:123456@127.0.0.1:3306/walioffice?charset=utf8mb4
+#      DB_MAX_CONNECTIONS: "8"
 
       # 方式二：内置 MySQL（取消下方 mysql 服务注释，并改 DATABASE_URL）
       #   DATABASE_URL: mysql://root:%21%40%23123QWEqwe@mysql:3306/walioffice?charset=utf8mb4
 
       # 方式三：SQLite（注释掉 DATABASE_URL 即可，数据存在 /app/data/walioffice.db）
-      #   DATABASE_URL: sqlite:data/walioffice.db
+      DATABASE_URL: sqlite:/app/data/walioffice.db?mode=rwc
 
       # ── 文本 LLM（部署时必改 API_KEY）──
       LLM_TEXT_BASE_URL: https://apihub.agnes-ai.cn/v1
-      LLM_TEXT_API_KEY: 申请你的key https://platform.agnes-ai.cn/
+      LLM_TEXT_API_KEY: sk-46Sab5SEzuLZypINZf65k9WEqCMvVeqvRS6sl7rYEX5Cz8zd
       LLM_TEXT_MODELS: agnes-2.5-flash
 
       # ── 图片模型（部署时必改 API_KEY）──
       LLM_IMAGE_BASE_URL: https://apihub.agnes-ai.cn/v1
-      LLM_IMAGE_API_KEY: 申请你的key https://platform.agnes-ai.cn/
+      LLM_IMAGE_API_KEY: sk-46Sab5SEzuLZypINZf65k9WEqCMvVeqvRS6sl7rYEX5Cz8zd
       LLM_IMAGE_MODELS: agnes-image-2.1-flash
 
       # ── 视频模型（部署时必改 API_KEY）──
       LLM_VIDEO_BASE_URL: https://apihub.agnes-ai.cn/v1
-      LLM_VIDEO_API_KEY: 申请你的key https://platform.agnes-ai.cn/
+      LLM_VIDEO_API_KEY: sk-46Sab5SEzuLZypINZf65k9WEqCMvVeqvRS6sl7rYEX5Cz8zd
       LLM_VIDEO_MODELS: agnes-video-v2.0
 
       # ── Agent 配置 ──
