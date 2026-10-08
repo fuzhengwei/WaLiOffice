@@ -13,7 +13,7 @@ version: "3.8"
 
 services:
   walioffice:
-    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/walioffice:1.1.1
+    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/walioffice:1.2.3
     container_name: walioffice
     ports:
       - "8000:8000"
@@ -27,7 +27,12 @@ services:
       AIPPT_JWT_SECRET: CHANGE_ME_TO_RANDOM_SECRET
       AIPPT_JWT_EXPIRY_HOURS: 24
 
-      # ── 登录配置（也可以让AI去掉登录） ──
+      # ── 登录配置 ──
+      # 登录鉴权开关：true 需要登录；false 关闭登录，所有请求自动使用 guest 默认用户
+      # （适合个人自用部署；多人部署请保持 true）
+      AIPPT_AUTH_ENABLED: "true"
+
+      # 验证码登录使用的验证服务地址（这里使用了公众号验证登录，你可以自己实现登录的接口。与星球里《openai 应用项目》的登录一致）https://t.zsxq.com/kEhGG
       WALIOFFICE_X_API_AUTH_LOGIN_URL: https://x-api.itedus.cn/api/v1/auth/login
 
       # ── 数据库配置 ──

@@ -10,6 +10,8 @@ pub struct Config {
     pub jwt_secret: String,
     pub jwt_expiry_hours: i64,
     pub x_api_auth_login_url: String,
+    /// 是否开启登录鉴权；关闭后所有请求自动使用 guest 默认用户
+    pub auth_enabled: bool,
 
     pub llm_base_url: String,
     pub llm_api_key: String,
@@ -129,6 +131,9 @@ impl Config {
                 "WALIOFFICE_X_API_AUTH_LOGIN_URL",
                 "https://x-api.itedus.cn/api/v1/auth/login",
             ),
+            auth_enabled: env_or("AIPPT_AUTH_ENABLED", "true")
+                .trim()
+                .eq_ignore_ascii_case("true"),
 
             llm_base_url: llm_text_base_url.clone(),
             llm_api_key,

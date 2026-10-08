@@ -4,8 +4,14 @@ use super::verify_token;
 use crate::error::AppError;
 use crate::models::User;
 
-/// 从请求头解析当前用户
+/// 从请求头解析当前用户；auth_enabled=false 时自动使用 guest 默认用户
 pub async fn extract_user(parts: &Parts) -> Result<User, AppError> {
+    if !crate::config::config().auth_enabled {
+        let pool = crate::state::db_pool();
+        let user = crate::db::user_repo::find_or_create_external(&pool, "guest").await?;
+        return Ok(user);
+    }
+
     let auth_header = parts
         .headers
         .get("Authorization")
